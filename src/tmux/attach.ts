@@ -1,5 +1,5 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
-import { createComposer, type Composer } from '@/composer/composer';
+import { busy, createComposer, type Composer } from '@/composer/composer';
 import { checkAborted, uniqueId, type AttachmentFile, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
@@ -10,6 +10,9 @@ import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
+
+import { toDraftText, type InputNotice } from './input-lane';
+import { createOutbox } from './input-outbox';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
 export interface SessionDestination {
@@ -84,6 +87,16 @@ export type OpenConnection = (host: Host, progress?: (step: ConnectStep) => void
 
 /** What the app is doing, as React Native reports it. */
 export type LifecyclePhase = 'active' | 'inactive' | 'background';
+
+/**
+ * A Pane view's read while no Connection is there. The status Banner already
+ * says that, so it is not a line of trouble.
+ */
+class NoConnection extends Error {
+  constructor() {
+    super('the Connection has gone');
+  }
+}
 
 export type AttachPhase =
   | { kind: 'connecting' }
@@ -163,7 +176,20 @@ export interface AttachState {
   rowInSight: number | null;
   /** Whether the active Pane uses the alternate screen. */
   alternate: boolean;
+  /**
+   * Typed keys that the user must know about: held for a decision, discarded,
+   * or waiting for a Connection. For every Pane, also one in a Window that is
+   * not on screen, because its keys wait all the same.
+   */
+  input: InputNotice[];
 }
+
+/**
+ * How old a typed key can be and still go to its Pane after a break without a
+ * question. A start value: long enough for one reconnect, short enough that
+ * the user still knows what was typed.
+ */
+const INPUT_TTL_MS = 30_000;
 
 /** What the Key Row's ⌘v delivers: the clipboard's text, or its image as a staged file. */
 export type Paste = { kind: 'text'; text: string } | { kind: 'image'; file: AttachmentFile };
@@ -226,6 +252,14 @@ export interface Attach {
   reconnect(): void;
   /** The user accepting the key the Host presented: it is remembered, and Typing opens. */
   acceptHostKey(): Promise<void>;
+  /**
+   * What the user decided about a Pane's held keys: send them, move their
+   * text to the Pane's Draft, or throw them away. False when nothing was
+   * done: the Pane holds no keys, or its Draft is on its way to the Pane.
+   */
+  heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean;
+  /** The user has read that a Pane's keys were discarded. */
+  dismissInput(paneId: string): void;
 
   // Per-Pane, for the views the screen puts Surfaces into.
   view(paneId: string): PaneView;
@@ -376,7 +410,7 @@ export function openAttach(options: AttachOptions): Attach {
           await buffer.dispose().catch(() => {});
         }
       },
-      pressEnter: (paneId: string) => current.sendKey(paneId, 'Enter'),
+      pressEnter: (paneId: string) => current.pressKey(paneId, 'Enter'),
       paneState: (paneId: string) => current.paneState(paneId),
     };
   }
@@ -441,7 +475,15 @@ export function openAttach(options: AttachOptions): Attach {
     mouseTracking: false,
     rowInSight: null,
     alternate: false,
+    input: [],
   };
+
+  const outbox = createOutbox({
+    now: () => clock.now(),
+    ttlMs: INPUT_TTL_MS,
+    onNotices: (input) => change({ input }),
+    say: speakingAs(log, 'outbox'),
+  });
 
   const sizing: ClientSizing = createClientSizing(async (grid) => {
     const current = client;
@@ -571,9 +613,11 @@ export function openAttach(options: AttachOptions): Attach {
      * handler, and React Native ended the app.
      */
     const reading = async () => {
-      if (stale(mine) || !client) throw new Error('the Connection has gone');
+      if (stale(mine) || !client) throw new NoConnection();
       return client;
     };
+    const lane = outbox.lane(paneId);
+
     const view = createPaneView(
       paneId,
       {
@@ -581,15 +625,17 @@ export function openAttach(options: AttachOptions): Attach {
         capturePane: (id) => reading().then((current) => current.capturePane(id)),
         captureScrollback: (id, start, end) => reading().then((current) => current.captureScrollback(id, start, end)),
         captureSelection: (id, start, end) => reading().then((current) => current.captureSelection(id, start, end)),
-        // Input is what says the phone is the one in use, so it is what takes
-        // the Window back from a laptop that resized it.
-        sendKeys: (id, bytes) => {
+      },
+      // Input is what says the phone is the one in use, so it is what takes
+      // the Window back from a laptop that resized it.
+      {
+        type: (bytes, gesture) => {
           sizing.reclaim();
-          return reading().then((current) => current.sendKeys(id, bytes));
+          lane.type(bytes, gesture);
         },
-        sendKey: (id, key) => {
+        press: (key) => {
           sizing.reclaim();
-          return reading().then((current) => current.sendKey(id, key));
+          lane.press(key);
         },
       },
       {
@@ -603,7 +649,7 @@ export function openAttach(options: AttachOptions): Attach {
           if (!stale(mine)) change({ trouble: null, ...paintedChange(paneId, true) });
         },
         onError: (error) => {
-          if (!stale(mine)) change({ trouble: describeError(error) });
+          if (!stale(mine) && !(error instanceof NoConnection)) change({ trouble: describeError(error) });
         },
       },
       { clock, log },
@@ -920,7 +966,8 @@ export function openAttach(options: AttachOptions): Attach {
         windowSize = size;
       });
 
-      change({ phase: { kind: 'connected' } });
+      // A line of trouble is about a command on this Connection, and none has failed yet.
+      change({ phase: { kind: 'connected' }, trouble: null });
       // A Connection that reached here has cleared whatever ended the last
       // one, so both automatic sources get their attempt again.
       attempted.clear();
@@ -934,6 +981,14 @@ export function openAttach(options: AttachOptions): Attach {
       // Size first, so the capture that follows is of a Pane the size of the
       // Surface rather than of whatever the last Client left it.
       sizing.attached();
+      // Each Pane with keys from before this Connection reads its mark now,
+      // and sends, holds or discards them on the answer.
+      outbox.connected(client);
+      void client.guardsLateLines().then((guarded) => {
+        if (!guarded && !stale(mine)) {
+          say('this tmux is older than 3.2: a line from a lost Connection that arrives late can type its keys twice');
+        }
+      });
       // A phone is too narrow for side-by-side Panes, so a split Session
       // arrives with its active Pane filling the Window.
       await client.setZoom(currentSessionTarget(), state.zoomed);
@@ -987,6 +1042,9 @@ export function openAttach(options: AttachOptions): Attach {
    */
   function teardown(): Promise<void> {
     composer.interrupt();
+    // Before the Control Connection closes, so an answer that the close fails
+    // is already an answer from a Connection that ended.
+    outbox.lost();
     const closingControl = control;
     const closingConnection = connection;
     control = null;
@@ -1306,7 +1364,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (!current) throw new Error('Not connected.');
       if (!pane) throw new Error('No active Pane.');
       say(`clearing ${pane.id}`);
-      await current.sendKey(pane.id, 'C-l');
+      await current.pressKey(pane.id, 'C-l');
       await new Promise<void>((resolve) => clock.after(CLEAR_SETTLE_MS, resolve));
       if (stale(mine)) return;
       await current.clearHistory(pane.id);
@@ -1339,6 +1397,24 @@ export function openAttach(options: AttachOptions): Attach {
       say('the user accepted the new Host key');
       await store.rememberFingerprint(host.id, fingerprint);
       if (state.fingerprint === fingerprint) change({ keyChanged: false });
+    },
+
+    heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean {
+      if (closed) return false;
+      if (action === 'send') return outbox.release(paneId);
+      if (action === 'discard') return outbox.take(paneId).length > 0;
+      // A Draft that is on its way to the Pane takes no edit, and the keys
+      // must not go where the user cannot see them.
+      const draft = composer.draft(paneId);
+      if (busy(draft)) return false;
+      const keys = outbox.take(paneId);
+      if (keys.length === 0) return false;
+      composer.edit(paneId, draft.text + toDraftText(keys).text);
+      return true;
+    },
+
+    dismissInput(paneId: string): void {
+      if (!closed) outbox.dismiss(paneId);
     },
 
     view: viewFor,
@@ -1446,6 +1522,8 @@ export function openAttach(options: AttachOptions): Attach {
       if (closed) return;
       say('closed on purpose');
       closed = true;
+      const unsent = outbox.close();
+      if (unsent > 0) say(`${unsent} typed keys had not reached their Pane; discarded with the Attach`);
       composer.dispose();
       generation += 1;
       sizing.dispose();

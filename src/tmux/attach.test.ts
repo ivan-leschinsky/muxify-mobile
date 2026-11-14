@@ -38,13 +38,72 @@ async function settle(): Promise<void> {
   for (let turn = 0; turn < 40; turn += 1) await Promise.resolve();
 }
 
+type Block = string[] | { error: string };
+
+/**
+ * The part of a tmux server that typed input meets, which every link to the
+ * server shares: what each Pane was typed, and the Seq it keeps. It answers
+ * the Batch line with the blocks that tmux 3.8 was measured to answer with.
+ */
+function fakeServer() {
+  let pid = 100;
+  let program = 'zsh';
+  const panes = new Map([['%0', { pid: 200, ack: 0, typed: [] as string[] }]]);
+  const mark = (paneId: string): string => {
+    const pane = panes.get(paneId);
+    return pane ? `${pane.ack || ''}:${pid}:${pane.pid}:${program}` : `:${pid}::`;
+  };
+  const keyOf = (send: string): string => {
+    const words = send.replace(/'/g, '').split(' ').slice(3);
+    return words[0] === '-H' ? String.fromCharCode(...words.slice(1).map((byte) => parseInt(byte, 16))) : `<${words[0]}>`;
+  };
+
+  return {
+    /** What a Pane was typed, in order. A named key is `<Enter>`. */
+    typed: (paneId = '%0') => panes.get(paneId)?.typed.join('') ?? null,
+    /** The server ends and another starts, with a new Pane under the same id. */
+    restart(): void {
+      pid += 1;
+      panes.clear();
+      panes.set('%0', { pid: 300, ack: 0, typed: [] });
+    },
+    /** `respawn-pane -k`: another process in the same Pane, which keeps its options. */
+    respawn(paneId = '%0'): void {
+      const pane = panes.get(paneId);
+      if (pane) pane.pid += 1;
+    },
+    runs: (next: string) => {
+      program = next;
+    },
+    /** The reply blocks of a line that is about typed input, or null for any other line. */
+    answer(line: string): Block[] | null {
+      const end = /^'display-message' '-p' '(muxify-chain-end-\d+)'$/.exec(line);
+      if (end) return [[end[1]]];
+      if (line.includes('#{version}')) return [['3.8']];
+      const read = /^'display-message' '-p' '-t' '(%\d+)' '#\{@muxify-in-/.exec(line);
+      if (read) return [[mark(read[1])]];
+      const guard = /^'if-shell' '-F' '-t' '(%\d+)' '#\{e\|<:#\{e\|\+:0,#\{@muxify-in-\w+\}\},(\d+)\}' "(.*?)"(?: ; |$)/.exec(line);
+      if (!guard) return null;
+      const [, paneId, seq, inner] = guard;
+      const pane = panes.get(paneId);
+      const last: Block[] = line.includes(" ; 'display-message'") ? [[mark(paneId)]] : [];
+      if (pane && pane.ack >= Number(seq)) return [[], ...last];
+      if (!pane) return [[], { error: `can't find pane: ${paneId}` }, ...last];
+      const send = inner.includes(' ; ') ? inner.split(' ; ')[0] : null;
+      if (send) pane.typed.push(keyOf(send));
+      pane.ack = Number(seq);
+      return [[], ...(send ? [[]] : []), [], ...last.map(() => [mark(paneId)])];
+    },
+  };
+}
+
 /**
  * A tmux that answers the control protocol, driven line by line from the test.
  *
  * Below the transport seam, so nothing here is asserted for its own sake: it
  * exists so the Attach can be fed exactly what a real tmux sends.
  */
-function fakeHost() {
+function fakeHost(server?: ReturnType<typeof fakeServer>) {
   const commands: string[] = [];
   let events: ControlChannelEvents | null = null;
   let channelOpen = false;
@@ -64,6 +123,8 @@ function fakeHost() {
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
+  /** Lines still reach the server, and nothing comes back: the link is dying. */
+  let mute = false;
   const held = new Set<string>();
   const queued: string[] = [];
 
@@ -95,6 +156,19 @@ function fakeHost() {
 
   function answer(line: string): void {
     if (held.has(verbOf(line)) || queued.length > 0) { queued.push(line); return; }
+    const blocks = server?.answer(line);
+    if (blocks) {
+      for (const block of mute ? [] : blocks) {
+        replies += 1;
+        say(
+          Array.isArray(block)
+            ? `%begin 1 ${replies} 1\n${block.map((each) => `${each}\n`).join('')}%end 1 ${replies} 1\n`
+            : `%begin 1 ${replies} 1\n${block.error}\n%error 1 ${replies} 1\n`,
+        );
+      }
+      return;
+    }
+    if (mute) return;
     replies += 1;
     const verb = verbOf(line);
     if (refusing.has(verb)) {
@@ -110,6 +184,9 @@ function fakeHost() {
     transport,
     commands,
     hold: (verb: string) => held.add(verb),
+    mute: () => {
+      mute = true;
+    },
     release: (verb?: string) => {
       if (verb) held.delete(verb);
       else held.clear();
@@ -486,6 +563,8 @@ describe('the order an Attach happens in', () => {
       // not keep it.
       'select-window',
       'refresh-client',
+      // What this tmux can do with typed keys, read before the first key needs it.
+      'display-message',
       'list-windows',
       'resize-pane',
       'list-windows',
@@ -1355,6 +1434,73 @@ describe('the Panes on screen', () => {
     expect(text).toContain('alive again');
   });
 
+  it('shows no line of trouble for a read while the Connection is gone, nor after it reconnects', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    kit.hosts[0].exit('server exited unexpectedly');
+    await settle();
+    kit.attach.view('%0').scroll(3, GRID);
+    kit.clock.advance(5000);
+    await settle();
+    expect(kit.attach.state().trouble).toBeNull();
+
+    kit.attach.reconnect();
+    await connected(kit, 1);
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
+  it('starts a new Connection with no line of trouble from the one before', async () => {
+    const split = fakeHost();
+    const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+    split.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
+      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
+    ]);
+    const kit = attachOn({ hosts: [split, fakeHost()] });
+    await connected(kit);
+    split.refuseCommand('select-pane');
+    kit.attach.selectPane('%2');
+    await settle();
+    expect(kit.attach.state().trouble).toContain('select Pane');
+
+    kit.hosts[0].drop();
+    await connected(kit, 1);
+    await settle();
+
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
+  it('shows no line of trouble from a read made while it was reconnecting', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    kit.hosts[0].drop();
+    await settle();
+    expect(kit.attach.state().phase.kind).toBe('reconnecting');
+    kit.attach.view('%0').scroll(3, GRID);
+    kit.clock.advance(5000);
+    await settle();
+    expect(kit.attach.state().trouble).toBeNull();
+
+    await connected(kit, 1);
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
   it('takes a Surface together with the grid it reported before this Attach existed', async () => {
     // A Surface says its grid once per size. An Attach introduced to one that
     // has been on screen a while — the one this screen belonged to was
@@ -1926,5 +2072,275 @@ describe('the current Session keeps its identity through a rename', () => {
     ]);
     expect(kit.attach.state().sessionName).toBe('Final');
     expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Fresh title');
+  });
+});
+
+describe('typed keys and a Connection that breaks', () => {
+  const type = (kit: ReturnType<typeof attachOn>, text: string) =>
+    kit.attach.view('%0').type(new TextEncoder().encode(text));
+
+  /** An Attach with a Pane on screen, on a server that two links reach. */
+  async function typing() {
+    const server = fakeServer();
+    const hosts = [fakeHost(server), fakeHost(server), fakeHost(server)];
+    const kit = attachOn({ hosts });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface(), GRID);
+    await settle();
+    return { kit, server, hosts };
+  }
+
+  async function reconnected(kit: ReturnType<typeof attachOn>, at: number): Promise<void> {
+    kit.hosts[at - 1].drop();
+    await settle();
+    kit.hosts[at].accept();
+    await settle();
+  }
+
+  it('types a key once when the reply to its line was lost', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].mute();
+    type(kit, 'abc');
+    await settle();
+    expect(server.typed()).toBe('abc');
+
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('abc');
+    expect(kit.attach.state().input).toEqual([]);
+  });
+
+  it('types a key once when its line never reached tmux', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    type(kit, 'abc');
+    await settle();
+    expect(server.typed()).toBe('');
+
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('abc');
+  });
+
+  it('types the keys of a break after the reconnect, behind the one that was in flight', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    type(kit, 'abc');
+    await settle();
+    hosts[0].drop();
+    await settle();
+    expect(kit.attach.state().phase.kind).not.toBe('connected');
+    type(kit, 'def');
+    kit.attach.view('%0').press('Left');
+    type(kit, 'g');
+
+    kit.hosts[1].accept();
+    await settle();
+    expect(server.typed()).toBe('abcdef<Left>g');
+    expect(kit.attach.state().input).toEqual([]);
+  });
+
+  it('does not type a line of the lost Connection that arrives late', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    type(kit, 'abc');
+    await settle();
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('abc');
+
+    hosts[0].release();
+    expect(server.typed()).toBe('abc');
+  });
+
+  it('holds keys that can do harm, and types them once when the user says Send', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'rm -rf x');
+    kit.attach.view('%0').press('Enter');
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(server.typed()).toBe('');
+    expect(kit.attach.state().input).toEqual([
+      {
+        kind: 'held',
+        paneId: '%0',
+        preview: 'rm -rf x⏎',
+        reasons: ['risky-keys'],
+        draft: { text: 'rm -rf x\n', dropped: [] },
+      },
+    ]);
+
+    kit.attach.heldInput('%0', 'send');
+    await settle();
+    expect(server.typed()).toBe('rm -rf x<Enter>');
+    expect(kit.attach.state().input).toEqual([]);
+  });
+
+  it('moves held keys to the Draft of their Pane, and the Pane gets none of them', async () => {
+    const { kit, server, hosts } = await typing();
+    kit.attach.composer.edit('%0', 'echo ');
+    hosts[0].hold('if-shell');
+    type(kit, 'hi\r');
+    await settle();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎' }]);
+
+    expect(kit.attach.heldInput('%0', 'compose')).toBe(true);
+    await settle();
+    expect(kit.attach.composer.draft('%0').text).toBe('echo hi\n');
+    expect(kit.attach.state().input).toEqual([]);
+
+    // The line of the lost Connection arrives after the user took the keys back.
+    hosts[0].release();
+    type(kit, 'x');
+    await settle();
+    expect(server.typed()).toBe('x');
+  });
+
+  it('does not type a late line with discarded keys when the burn was lost with its Connection', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    kit.attach.view('%0').press('Enter');
+    await settle();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: '⏎' }]);
+
+    hosts[1].hold('if-shell');
+    kit.attach.heldInput('%0', 'discard');
+    await settle();
+    await reconnected(kit, 2);
+    hosts[0].release();
+    hosts[1].release();
+    await settle();
+    expect(server.typed()).toBe('');
+  });
+
+  it('keeps held keys on the card and says so when the Draft is on its way to the Pane', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'hi\r');
+    kit.hosts[1].accept();
+    await settle();
+    kit.attach.composer.edit('%0', 'echo');
+    hosts[1].hold('set-buffer');
+    void kit.attach.composer.send('%0');
+    await settle();
+    expect(kit.attach.composer.draft('%0').phase).toBe('sending');
+
+    expect(kit.attach.heldInput('%0', 'compose')).toBe(false);
+    expect(kit.attach.composer.draft('%0').text).toBe('echo');
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎' }]);
+    expect(server.typed()).toBe('');
+  });
+
+  it('throws held keys away when the user says Discard', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, '\x03');
+    kit.hosts[1].accept();
+    await settle();
+    kit.attach.heldInput('%0', 'discard');
+    type(kit, 'x');
+    await settle();
+    expect(server.typed()).toBe('x');
+    expect(kit.attach.state().input).toEqual([]);
+  });
+
+  it('holds keys when the Pane runs another program than before the break', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'abc');
+    server.runs('vim');
+    kit.hosts[1].accept();
+    await settle();
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', reasons: ['program-changed'] }]);
+    expect(server.typed()).toBe('');
+  });
+
+  it('holds keys that waited longer than a reconnect takes', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'abc');
+    kit.clock.advance(31_000);
+    kit.attach.reconnect();
+    await settle();
+    kit.hosts[kit.opened.length - 1].accept();
+    await settle();
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', reasons: ['stale'] }]);
+    expect(server.typed()).toBe('');
+  });
+
+  it('discards the keys with a notice when the server started again, and the new Pane gets nothing', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'abc');
+    server.restart();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(kit.attach.state().input).toEqual([
+      { kind: 'discarded', paneId: '%0', preview: 'abc', reason: 'server-restarted' },
+    ]);
+    expect(server.typed()).toBe('');
+
+    kit.attach.dismissInput('%0');
+    expect(kit.attach.state().input).toEqual([]);
+    type(kit, 'x');
+    await settle();
+    expect(server.typed()).toBe('x');
+  });
+
+  it('does not type a late line with keys it called discarded when the Pane was started again', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    type(kit, 'abc');
+    await settle();
+    server.respawn();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'discarded', preview: 'abc', reason: 'pane-replaced' }]);
+
+    hosts[0].release();
+    expect(server.typed()).toBe('');
+  });
+
+  it('never replays a scroll of a full-screen program', async () => {
+    const server = fakeServer();
+    const hosts = [fakeHost(server), fakeHost(server)];
+    for (const host of hosts) host.answering('display-message', ['0\t0\t1\t0\t49\t41\t1\t1\t1']);
+    const kit = attachOn({ hosts });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface(), GRID);
+    await settle();
+
+    hosts[0].hold('if-shell');
+    kit.attach.view('%0').scroll(5, GRID);
+    await settle();
+    expect(hosts[0].verbs()).toContain('if-shell');
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('');
+    expect(kit.attach.state().input).toEqual([]);
+    expect(kit.said().join('\n')).toContain('outbox: %0 dropped 1 scroll or tap events');
+  });
+
+  it('says in the Log how many keys a closed Attach still had, and never which', async () => {
+    const { kit, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'hunter2');
+    kit.attach.view('%0').press('Enter');
+    kit.hosts[1].accept();
+    await settle();
+    await kit.attach.close();
+
+    const said = kit.said().join('\n');
+    expect(said).toContain('attach: 2 typed keys had not reached their Pane; discarded with the Attach');
+    expect(said).toContain('outbox: %0 holds 2 keys for the user: risky-keys');
+    expect(said).not.toContain('hunter2');
+    expect(said).not.toContain('68 75 6e');
   });
 });

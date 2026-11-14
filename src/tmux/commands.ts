@@ -20,6 +20,10 @@
  * Pure string building, no transport.
  */
 
+import type { MarkRead, PaneMark, Seq } from './input-lane';
+import type { RenderedPress } from './key-press';
+import { tmuxAtLeast } from './tmux-version';
+
 /** One tmux command: the verb and its arguments, unquoted. */
 export type TmuxArgv = string[];
 
@@ -90,6 +94,8 @@ export function renderControlCommand(argv: TmuxArgv): string {
  */
 export function describeCommand(argv: TmuxArgv): string {
   if (argv[0] === 'set-buffer') return `set-buffer (${argv.at(-1)?.length ?? 0} characters)`;
+  // Its last argument is the commands it runs, and those carry typed input.
+  if (argv[0] === 'if-shell') return `${argv.slice(0, -1).join(' ')} (commands hidden)`;
   if (argv[0] !== 'send-keys') return argv.join(' ');
   const target = argv.indexOf('-t');
   const named = target >= 0 ? argv[target + 1] : '?';
@@ -366,6 +372,109 @@ export function sendKeysCommand(paneId: string, bytes: Uint8Array): TmuxArgv {
  */
 export function sendKeyCommand(paneId: string, key: string): TmuxArgv {
   return ['send-keys', '-t', paneId, key];
+}
+
+/**
+ * Names one Outbox. A new one for each Attach, so the numbers of another
+ * phone or of an earlier run of the app are in another option.
+ */
+export type OutboxToken = string & { readonly __brand: 'OutboxToken' };
+
+/**
+ * The Pane option that holds the highest Seq the Pane took from one Outbox.
+ *
+ * A user option of the Pane, not a Session option: it changes nothing that
+ * tmux or another client reads, and it ends with the Pane.
+ */
+export function inputOption(token: OutboxToken): string {
+  return `@muxify-in-${token}`;
+}
+
+/**
+ * Reads a Pane's mark: the Seq it took, the server, the Pane's process and
+ * its program. The program is last, because it is the one free text.
+ *
+ * Colons between them, not the tabs of the other reads. Measured in a
+ * container with no locale: tmux 3.0a and 3.2a print a tab as `_` to a client
+ * that is not UTF-8, and a mark that cannot be read holds every key.
+ *
+ * Measured on tmux 3.2a and 3.8: for a Pane that is gone this does not fail.
+ * It prints the server's pid and leaves the Pane's fields empty. On 3.0a it
+ * fails with `can't find pane`.
+ */
+export function paneMarkCommand(paneId: string, option: string): TmuxArgv {
+  return [
+    'display-message',
+    '-p',
+    '-t',
+    paneId,
+    `#{${option}}:#{pid}:#{pane_pid}:#{pane_current_command}`,
+  ];
+}
+
+/** The reply of paneMarkCommand. Null when it is not a mark at all. */
+export function parsePaneMark(line: string | undefined): MarkRead | null {
+  const [ack, serverPid, panePid, ...program] = (line ?? '').split(':');
+  if (program.length === 0 || !/^\d+$/.test(serverPid)) return null;
+  if (!/^\d+$/.test(panePid)) return 'gone';
+  const mark: PaneMark = {
+    serverPid: Number(serverPid),
+    panePid: Number(panePid),
+    program: program.join(':'),
+    ack: /^\d+$/.test(ack) ? (Number(ack) as Seq) : null,
+  };
+  return mark;
+}
+
+/**
+ * True while the Pane's Seq is below this one. Numeric: `#{<:9,10}` compares
+ * strings and is 0. `e|+:0,` makes a Pane with no option read as 0.
+ */
+function belowSeq(option: string, seq: Seq): string {
+  return `#{e|<:#{e|+:0,#{${option}}},${seq}}`;
+}
+
+/**
+ * Whether a Host's tmux can refuse a line by itself. The numeric format
+ * operators came with tmux 3.2 (CHANGES FROM 3.1c TO 3.2: "Add numeric
+ * comparisons for formats"); `if-shell -F` is from 2.0.
+ */
+export function guardsLateLines(version: string): boolean {
+  return tmuxAtLeast(version, 3, 2);
+}
+
+/**
+ * The line that types one Batch: the key, then the Pane's new Seq, then the
+ * Pane's mark. Run it with `runChain`.
+ *
+ * tmux runs the key and the Seq back to back and skips the Seq when the key
+ * failed, so the Seq is on the Pane only if the key went in. With `guarded`,
+ * tmux types nothing when the Pane already has this Seq. That is the case of
+ * a line from a lost Connection that arrives after the same Batch was sent
+ * again. The mark is read in both cases, so a skipped line answers like a
+ * delivered one. Measured on tmux 3.8 with `e2e/probe-input-guard.mjs`.
+ */
+export function deliverCommands(
+  paneId: string,
+  key: RenderedPress,
+  seq: Seq,
+  option: string,
+  guarded: boolean,
+): TmuxArgv[] {
+  const send = 'key' in key ? sendKeyCommand(paneId, key.key) : sendKeysCommand(paneId, key.bytes);
+  const record = ['set-option', '-p', '-t', paneId, option, String(seq)];
+  const mark = paneMarkCommand(paneId, option);
+  if (!guarded) return [send, record, mark];
+  return [
+    ['if-shell', '-F', '-t', paneId, belowSeq(option, seq), `${renderControlCommand(send)} ; ${renderControlCommand(record)}`],
+    mark,
+  ];
+}
+
+/** Raises a Pane's Seq and types nothing, so a late line with that Seq is refused. */
+export function burnSeqCommand(paneId: string, seq: Seq, option: string, guarded: boolean): TmuxArgv {
+  const record = ['set-option', '-p', '-t', paneId, option, String(seq)];
+  return guarded ? ['if-shell', '-F', '-t', paneId, belowSeq(option, seq), renderControlCommand(record)] : record;
 }
 
 /**
