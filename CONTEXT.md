@@ -560,9 +560,22 @@ tmux buffer with bracketed paste, so a program that asked for bracketed paste
 gets many lines as one piece and runs none. For text with a line break into a
 program that did not ask, the phone asks first, because that program runs
 each line as the line arrives. ⌘k clears the active
-Pane: the program in it draws its screen again and the Scrollback goes. ⌘ and
-any other key is that key.
+Pane: the program in it draws its screen again and the Scrollback goes. A
+Keyboard Shortcut's key comes first, so ⌘ and K is Pane above. ⌘ and any
+other key is that key.
 _Avoid_: hotkey, command (on its own)
+
+**Keyboard Shortcut**:
+A ⌘ chord on a hardware keyboard that does something in Muxify: ⌘, opens
+Settings, ⌘D and ⇧⌘D split the active Pane right and down, and ⇧⌘H, ⇧⌘J,
+⇧⌘K and ⇧⌘L go to the Pane on that side. tmux finds that Pane, wraps at the
+edge, and keeps the Zoom. Settings > Keyboard Shortcuts changes the key of
+each one. Every one holds ⌘, because tmux has no ⌘ to give a Pane, and no two
+share a key. Only those the screen on top can do are offered, so a chord
+nothing handles still reaches the Pane. The Key Row's ⌘ reaches them too: ⌘
+and then D on the software keyboard is ⇧⌘D, and an armed ⌃ or ⌥ counts as
+held.
+_Avoid_: hotkey, key binding
 
 **Composer**:
 The place to prepare a message for a Pane before sending it: multiline text,
