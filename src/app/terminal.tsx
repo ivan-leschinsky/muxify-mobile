@@ -1450,6 +1450,7 @@ export default function TerminalScreen() {
             <TerminalView
               style={styles.surface}
               fontSize={fontSize}
+              ligatures={settings.ligatures}
               accessoryBar={false}
               shortcutBar={false}
               theme={{
@@ -1482,6 +1483,7 @@ export default function TerminalScreen() {
               slot={slot}
               painted={painted.has(slot.pane.id)}
               font={fontSize}
+              ligatures={settings.ligatures}
               terminal={terminal}
               ansi={ansi}
               onRef={adoptPaneSurface}
@@ -1781,6 +1783,7 @@ function PaneSurfaceView({
   slot,
   painted,
   font,
+  ligatures,
   terminal,
   ansi,
   onRef,
@@ -1801,6 +1804,7 @@ function PaneSurfaceView({
   /** Whether the Attach has painted this Pane's Surface. */
   painted: boolean;
   font: number;
+  ligatures: boolean;
   terminal: TerminalPalette;
   ansi: readonly string[] | undefined;
   /** The Surface arriving or going, with the grid it has reported if any. */
@@ -1879,6 +1883,7 @@ function PaneSurfaceView({
         ref={register}
         style={styles.surface}
         fontSize={font}
+        ligatures={ligatures}
         // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
         // and the iPad's undo, redo and Paste bar, both turned off by a local
         // patch. The Key Row stands in their place; see ADR 0003.

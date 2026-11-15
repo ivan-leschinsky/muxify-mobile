@@ -136,6 +136,13 @@ export default function SettingsScreen() {
                 modifiers={[fixedSize({ horizontal: true, vertical: false })]}
               />
             </HStack>
+
+            <Toggle
+              label="Ligatures"
+              isOn={value.ligatures}
+              onIsOnChange={(on) => update({ ligatures: on })}
+              modifiers={[tint(palette.controlAccent)]}
+            />
           </Section>
 
           <Section

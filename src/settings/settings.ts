@@ -23,6 +23,11 @@ export interface Settings {
    */
   fontSize: number | null;
   /**
+   * Whether the Surface's font may join characters such as `>=` into one
+   * glyph. On by default, which is how ghostty draws its own font.
+   */
+  ligatures: boolean;
+  /**
    * Whether the app is light, dark, or follows the phone. The app and the
    * Surface are always the same kind: resolveTheme picks lightTheme or
    * darkTheme from this.
@@ -142,6 +147,7 @@ export const DEFAULT_FONT_SIZE = 13;
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: null,
+  ligatures: true,
   appearance: 'system',
   lightTheme: 'solarized-light',
   darkTheme: 'ghostty',
@@ -294,6 +300,7 @@ export function parseSettings(raw: unknown): Settings {
   const record = raw as Record<string, unknown>;
 
   const fontSize = record.fontSize;
+  const ligatures = record.ligatures;
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
 
@@ -316,6 +323,7 @@ export function parseSettings(raw: unknown): Settings {
     ...(keyboardShortcuts === undefined ? {} : { keyboardShortcuts }),
     ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
+    ligatures: typeof ligatures === 'boolean' ? ligatures : DEFAULT_SETTINGS.ligatures,
     ...parseThemeChoice(record),
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,

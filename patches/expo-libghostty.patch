@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..18ac450c3f0a88f9874da412cfcab43cfe9724b0 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..02ecade064907b4dac63454db57ab1881a4eacf9 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -48,7 +48,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..18ac450c3f0a88f9874da412cfcab43c
 +     * Any other name rejects. iOS only.
 +     */
 +    pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
- };
++};
 +/** The modifiers held with a key. `cmd` is ghostty's `super`. */
 +export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +/** One row of terminal text for the Selection Layer. */
@@ -63,7 +63,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..18ac450c3f0a88f9874da412cfcab43c
 +    cells?: number[];
 +    /** Whether the row runs on into the next one, so a copy joins the two. */
 +    wraps: boolean;
-+};
+ };
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +/** What the user chose to paste: text, or an image saved to a file. */
@@ -71,10 +71,15 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..18ac450c3f0a88f9874da412cfcab43c
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +106,77 @@ export type TerminalViewProps = {
+@@ -52,10 +106,82 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
++    /**
++     * Whether the font may join characters such as `>=` into one glyph.
++     * Defaults to true. App-wide on iOS, like the theme. iOS only.
++     */
++    ligatures?: boolean;
 +    /**
 +     * Whether to show the library's own accessory bar (ctrl, esc, tab, arrows)
 +     * above the system keyboard. Defaults to true. iOS only.
@@ -216,7 +221,7 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..7504a449096d2d1ec409df9196a8b8953897a039 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..9839c56cbba4aeb9a60560f1f40a8fa01b47d6b7 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
 @@ -1,11 +1,21 @@
@@ -242,7 +247,21 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..7504a449096d2d1ec409df9196a8b895
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +46,62 @@ public class ExpoLibghosttyModule: Module {
+@@ -19,6 +29,13 @@ public class ExpoLibghosttyModule: Module {
+         view.applyTheme(theme)
+       }
+ 
++      // Whether the font may join characters such as >= into one glyph.
++      // Defaults to true, which is ghostty's own behaviour. App-wide on iOS,
++      // like the theme.
++      Prop("ligatures") { (view: ExpoLibghosttyView, on: Bool?) in
++        view.applyLigatures(on ?? true)
++      }
++
+       // PTY output bytes (base64) → terminal grid.
+       AsyncFunction("write") { (view: ExpoLibghosttyView, base64: String) in
+         guard let data = Data(base64Encoded: base64) else {
+@@ -36,6 +53,62 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -305,7 +324,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..7504a449096d2d1ec409df9196a8b895
      }
    }
  }
-@@ -46,6 +112,37 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +119,37 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -344,7 +363,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..7504a449096d2d1ec409df9196a8b895
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c4235f432bf 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..869caa338513425646a95a96e5527441ceed72b3 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -404,10 +423,33 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c42
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -26,7 +71,16 @@ class ExpoLibghosttyView: ExpoView {
+@@ -21,12 +66,39 @@ class ExpoLibghosttyView: ExpoView {
+     }
+   }
+ 
++  private var theme: TerminalThemeRecord?
++  private var ligatures = true
++
+   /// Theme colors, applied through the shared controller's ghostty config —
+   /// on iOS the theme is app-wide (every terminal view of the controller),
    /// unlike Android's per-view application. Colors accept ghostty config
    /// syntax; nil clears back to the defaults.
    func applyTheme(_ theme: TerminalThemeRecord?) {
++    self.theme = theme
++    applyConfiguration()
++  }
++
++  /// Whether the font may join characters such as `>=` into one glyph.
++  /// App-wide like the theme, because it goes into the same ghostty config.
++  func applyLigatures(_ on: Bool) {
++    ligatures = on
++    applyConfiguration()
++  }
++
++  /// Builds the one ghostty config every terminal view shares, from the
++  /// theme and the ligature choice, and hands it to the shared controller.
++  /// The controller ignores a config equal to the one it has.
++  private func applyConfiguration() {
 +    // No padding, so the grid starts at the view's top left. The Selection
 +    // Layer and every caller that turns a touch into a cell count from there;
 +    // ghostty's default of 2 pt drew each glyph 2 pt past the cell they meant.
@@ -421,7 +463,20 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c42
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -44,6 +98,50 @@ class ExpoLibghosttyView: ExpoView {
+@@ -39,11 +111,63 @@ class ExpoLibghosttyView: ExpoView {
+         }
+       }
+     }
++    if !ligatures {
++      // Ligatures come from two OpenType features: contextual alternates
++      // (calt), which ghostty's default font uses for `>=` and `!=`, and
++      // standard ligatures (liga), which other fonts use.
++      config = config
++        .appending(.custom(key: "font-feature", value: "-calt"))
++        .appending(.custom(key: "font-feature", value: "-liga"))
++    }
+     _ = TerminalController.shared.setTheme(TerminalTheme(light: config, dark: config))
+   }
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -472,7 +527,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c42
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +154,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +180,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -494,7 +549,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c42
        }
      )
      self.session = session
-@@ -66,21 +175,280 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +201,280 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -2489,7 +2544,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..531e8a1db2ab9feb75d47301e8e01f48d789f400 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..03d43411008d953572d26b877d5bbeffe4d0a166 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2538,8 +2593,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..531e8a1db2ab9feb75d47301e8e01f48
 +   * Any other name rejects. iOS only.
 +   */
 +  pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
- };
- 
++};
++
 +/** The modifiers held with a key. `cmd` is ghostty's `super`. */
 +export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +
@@ -2555,8 +2610,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..531e8a1db2ab9feb75d47301e8e01f48
 +  cells?: number[];
 +  /** Whether the row runs on into the next one, so a copy joins the two. */
 +  wraps: boolean;
-+};
-+
+ };
+ 
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +
@@ -2566,8 +2621,15 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..531e8a1db2ab9feb75d47301e8e01f48
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -59,6 +117,63 @@ export type TerminalViewProps = {
+@@ -57,8 +115,70 @@ export type TerminalViewProps = {
+    * pass undefined fields to keep ghostty's defaults.
+    */
    theme?: TerminalTheme;
++  /**
++   * Whether the font may join characters such as `>=` into one glyph.
++   * Defaults to true. App-wide on iOS, like the theme. iOS only.
++   */
++  ligatures?: boolean;
    /** User keyboard/IME input to forward to the PTY. */
    onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;
 +  /**
