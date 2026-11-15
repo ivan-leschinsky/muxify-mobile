@@ -36,6 +36,7 @@ describe('parseSettings', () => {
     expect(
       parseSettings({
         fontSize: 14,
+        ligatures: false,
         appearance: 'light',
         lightTheme: 'gruvbox-light',
         darkTheme: 'gruvbox-dark-hard',
@@ -45,6 +46,7 @@ describe('parseSettings', () => {
       }),
     ).toEqual({
       fontSize: 14,
+      ligatures: false,
       appearance: 'light',
       lightTheme: 'gruvbox-light',
       darkTheme: 'gruvbox-dark-hard',
@@ -105,6 +107,7 @@ describe('parseSettings', () => {
     expect(
       parseSettings({
         fontSize: 13,
+        ligatures: 'no',
         appearance: 'dusk',
         lightTheme: 42,
         darkTheme: 'dracula',
@@ -114,6 +117,7 @@ describe('parseSettings', () => {
       }),
     ).toEqual({
       fontSize: 13,
+      ligatures: true,
       appearance: 'system',
       lightTheme: 'solarized-light',
       darkTheme: 'dracula',

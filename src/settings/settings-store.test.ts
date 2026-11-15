@@ -16,6 +16,7 @@ function fakeFile(initial: string | null = null) {
 
 const CHANGED: Settings = {
   fontSize: 14,
+  ligatures: false,
   appearance: 'dark',
   lightTheme: 'gruvbox-light',
   darkTheme: 'dracula',
