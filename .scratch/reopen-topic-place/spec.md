@@ -184,3 +184,15 @@ then the page. Changed:
 - The swipe from the edge is off on a page in a Topic.
 - A cold start still pushes the Terminal Screen, then the page once the
   Attach is up.
+
+## Revision 4 (2026-11-16): the swipe back
+
+Gleb wanted the swipe from the edge back. A page over the Terminal Screen
+shows the terminal under it while the swipe moves. Changed:
+
+- In a Topic, the Web View takes the Terminal Screen's place
+  (`router.replace`), right over the Host Screen. Back and the swipe are the
+  stack's own pop, and the Topic keeps the Tab. The Title Sheet's Window pick,
+  or a Tab the Host lists no more, replaces the Web View with the Terminal
+  Screen. No `usePreventRemove`, no terminal slipped under the page.
+- A Session's page (no Topic) still goes over its Terminal Screen.

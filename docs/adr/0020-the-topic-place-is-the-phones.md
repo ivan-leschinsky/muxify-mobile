@@ -25,8 +25,10 @@ the Mac does not see it.
   not write during a Session switch or a restore, because the Window that tmux
   shows then is one that the user only passes through.
 - The Web View tells the Attach which Tab it shows and gets a token. A Window
-  or Session pick returns the token and clears the Tab. Back, in a Topic, goes
-  to the Host Screen and keeps the token, so the Tab stays in the Topic Place.
+  or Session pick returns the token and clears the Tab. In a Topic, the Web
+  View takes the Terminal Screen's place over the Host Screen, so Back and the
+  swipe from the edge go to the Host Screen. They keep the token, so the Tab
+  stays in the Topic Place.
   A Topic change makes the token stale, so the Web View that the change
   dismisses leaves the old Topic's Tab in its Topic Place.
 - Opening a Topic, also the Topic that the Attach still holds (a Topic card, the Title Sheet's Topics, a cold start with a

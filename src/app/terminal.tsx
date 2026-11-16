@@ -259,7 +259,7 @@ export default function TerminalScreen() {
       if (!requested.reconnect) {
         await holder.open(request);
         if (!left) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
-        if (!left && place?.tab) router.push(placeTabRoute(place.tab));
+        if (!left && place?.tab) router.replace(placeTabRoute(place.tab));
         return;
       }
       setReconnectHost(host.displayName);
@@ -280,7 +280,7 @@ export default function TerminalScreen() {
         },
       });
       if (!left && accepted) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
-      if (!left && accepted && place?.tab) router.push(placeTabRoute(place.tab));
+      if (!left && accepted && place?.tab) router.replace(placeTabRoute(place.tab));
     })().catch((error) => { if (!left) setMissing(describeError(error)); });
     return () => {
       left = true;
@@ -327,13 +327,21 @@ export default function TerminalScreen() {
   const closePicker = useCallback(() => setPicker({ open: false }), []);
   /** A cold start's visit is over once a Session is picked in place of one that stopped. */
   const forgetLookup = useCallback(() => setLookup(null), []);
-  /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
+  /**
+   * A Tab picked in the Title Sheet: its page in the Web View. The Attach
+   * stays up. In a Topic, the page takes this screen's place, so Back from it
+   * goes to the Host Screen, as Back from here does. A Session's page goes
+   * over this screen, and Back comes back here.
+   */
+  const inTopic = state?.topic != null;
   const showTab = useCallback((tab: BrowserTab) => {
-    router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
-  }, [router]);
-  /** A Topic opened from the Title Sheet whose Topic Place has a Tab: its page, in one move. */
+    const page = { pathname: '/web-view', params: { url: tab.url, title: tab.title } } as const;
+    if (inTopic) router.replace(page);
+    else router.push(page);
+  }, [router, inTopic]);
+  /** A Topic opened from the Title Sheet whose Topic Place has a Tab: its page, in this screen's place. */
   const moved = useCallback((tab: PlaceTab | null) => {
-    if (tab) router.push(placeTabRoute(tab));
+    if (tab) router.replace(placeTabRoute(tab));
   }, [router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
     onReplacingStopped: forgetLookup });

@@ -158,8 +158,7 @@ export default function HostScreen() {
   }, []);
   const entered = useCallback((tab: PlaceTab | null) => {
     closeGoTo();
-    // A Topic Place with a Tab: the page alone slides in, and it puts the
-    // Terminal Screen under itself once it is in.
+    // A Topic Place with a Tab: the page, in the Terminal Screen's place.
     router.push(tab ? placeTabRoute(tab) : '/terminal');
   }, [closeGoTo, router]);
   const hostEntry = useHostEntry(id, entered);
