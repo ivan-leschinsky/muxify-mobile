@@ -29,7 +29,11 @@ export interface AttachRequest {
 export interface AttachHolder {
   /** The attached Session, or null when nothing is. */
   current(): Attach | null;
-  /** Reuses a connected Attach on the same Host, or closes it before opening another. */
+  /**
+   * Reuses the Attach on the same Host when it is connected, or when it is on
+   * the Session asked for, and reconnects it if it is disconnected. Otherwise
+   * closes it before opening another.
+   */
   open(request: AttachRequest): Promise<Attach>;
   /**
    * Ends it on purpose. It does not come back on its own, and the Last Place
@@ -98,6 +102,9 @@ export function createAttachHolder(
         if (attached && attached.hostId === request.host.id && attached.state().phase.kind !== 'closed' &&
             (attached.state().phase.kind === 'connected' || attached.state().sessionName === request.destination.sessionName)) {
           await attached.switchSession(request.destination);
+          // Opening the Session the Attach lost is the user asking for it again.
+          // The same Attach reconnects, so its Drafts and held keys stay.
+          if (attached.state().phase.kind === 'disconnected') attached.reconnect();
           return attached;
         }
 

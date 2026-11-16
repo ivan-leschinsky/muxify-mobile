@@ -1,6 +1,7 @@
 import type { Host } from '@/storage/records';
 import { createComposer } from '@/composer/composer';
 import { typingOf } from '@/domain/typing';
+import type { TopicId } from '@/topics/environment';
 
 import type { Attach, AttachState, LifecyclePhase } from './attach';
 import { createAttachHolder, type AttachRequest } from './attach-holder';
@@ -16,8 +17,9 @@ const host = (id: string): Host => ({
 });
 
 /** An Attach that records what was done to it and nothing else. */
-function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, log: string[]): Attach {
+function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, log: string[], ends: (() => void)[] = []): Attach {
   let phase: AttachState['phase'] = { kind: 'connecting' };
+  ends.push(() => { phase = { kind: 'disconnected', reason: { kind: 'session-ended', detail: 'The Session ended' } }; });
   let destination = options.destination;
   log.push(`open ${options.host.id}:${options.destination.sessionName}`);
   const state = (): AttachState => ({
@@ -50,7 +52,12 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     composer: createComposer(() => { throw new Error('no composer destination here'); }),
     state,
     subscribe: () => () => {},
-    switchSession: async (next) => { destination = next; phase = { kind: 'connected' }; },
+    switchSession: async (next) => {
+      // As the real one: with no Connection, only the Session it was on is taken, and it stays disconnected.
+      if (phase.kind === 'disconnected' && next.sessionName !== destination.sessionName) throw new Error('not connected');
+      destination = next;
+      if (phase.kind !== 'disconnected') phase = { kind: 'connected' };
+    },
     selectWindow: () => Promise.resolve(),
     selectPane: () => false,
     selectPaneToward: () => {},
@@ -64,7 +71,10 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     refreshSessions: () => {},
     refreshTopology: () => {},
     refreshTopic: async () => {},
-    reconnect: () => {},
+    reconnect: () => {
+      log.push(`reconnect ${options.host.id}:${destination.sessionName}`);
+      phase = { kind: 'reconnecting' };
+    },
     acceptHostKey: () => Promise.resolve(),
     heldInput: () => false,
     discardedInput: () => false,
@@ -102,9 +112,11 @@ function holderOn() {
       return Promise.resolve();
     },
   };
-  const holder = createAttachHolder((options) => fakeAttach(options, log), lastPlace);
+  /** Ends the Session under each Attach opened, in order: tmux's bare `%exit`. */
+  const ends: (() => void)[] = [];
+  const holder = createAttachHolder((options) => fakeAttach(options, log, ends), lastPlace);
   holder.subscribe((attach) => seen.push(attach ? attach.state().sessionName : null));
-  return { holder, log, seen };
+  return { holder, log, seen, ends };
 }
 
 describe('the Theme’s colours', () => {
@@ -187,6 +199,33 @@ describe('the one Attach the app holds', () => {
     const { holder, log } = holderOn();
     await holder.disconnect();
     expect(log).toEqual([]);
+  });
+});
+
+describe('a Session that ended under the Attach', () => {
+  const topic = { id: 'topic-1' as TopicId, seed: null };
+
+  it('is opened again on the same Attach, at the destination asked for', async () => {
+    const { holder, log, ends } = holderOn();
+    const first = await holder.open({ host: host('a'), destination: { sessionName: 'My Obsidian', topic: null }, zoomed: true });
+    ends[0]();
+
+    const again = await holder.open({ host: host('a'), destination: { sessionName: 'My Obsidian', topic }, zoomed: true });
+
+    expect(again).toBe(first);
+    expect(again.state().topic?.id).toBe('topic-1');
+    expect(again.state().phase.kind).toBe('reconnecting');
+    expect(log).toEqual(['open a:My Obsidian', 'reconnect a:My Obsidian']);
+  });
+
+  it('is closed for another Session, which opens new', async () => {
+    const { holder, log, ends } = holderOn();
+    await holder.open({ host: host('a'), destination: { sessionName: 'My Obsidian', topic: null }, zoomed: true });
+    ends[0]();
+
+    await holder.open({ host: host('a'), destination: { sessionName: 'work', topic: null }, zoomed: true });
+
+    expect(log).toEqual(['open a:My Obsidian', 'close a:My Obsidian', 'open a:work']);
   });
 });
 

@@ -15,6 +15,7 @@ import {
   type AttachState,
   type HostConnection,
 } from './attach';
+import { createAttachHolder, type AttachRequest } from './attach-holder';
 import { GRID_SETTLE_MS } from './client-sizing';
 import type { PaneColours } from './commands';
 import type { PaneSurface } from './pane-view';
@@ -1273,6 +1274,67 @@ describe('the Connection it shares with the screens', () => {
     expect(kit.phases()).toContain('disconnected');
     expect(kit.attach.state().phase.kind).toBe('reconnecting');
     expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
+  });
+});
+
+/** The real holder, holding the one Attach the kit made. */
+function heldOn(options: Parameters<typeof attachOn>[0]) {
+  const kit = attachOn(options);
+  let opens = 0;
+  const holder = createAttachHolder(() => {
+    opens += 1;
+    return kit.attach;
+  }, { forgetLastPlace: () => Promise.resolve() });
+  return { kit, holder, opens: () => opens };
+}
+
+/** What a Topic card or the Host Screen asks the holder for. */
+function opening(options: { sessionName?: string; topicId?: string; restore?: TopicPlace } = {}): AttachRequest {
+  return {
+    host: HOST,
+    destination: { sessionName: options.sessionName ?? 'work',
+      topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null, restore: options.restore },
+    zoomed: true,
+  };
+}
+
+describe('opening a Session again after it ended', () => {
+  it('attaches again to a Session the Host made again with the same name', async () => {
+    const { kit, holder, opens } = heldOn({ hosts: [fakeHost(), fakeHost()], sessionName: 'My Obsidian' });
+    const first = await holder.open(opening({ sessionName: 'My Obsidian' }));
+    await connected(kit);
+    kit.hosts[0].exit('');
+    await settle();
+    const ended = kit.attach.state().phase;
+    if (ended.kind !== 'disconnected') throw new Error('expected disconnected');
+    expect(ended.reason).toEqual({ kind: 'session-ended', detail: 'The Session ended' });
+
+    const again = await holder.open(opening({ sessionName: 'My Obsidian' }));
+    await settle();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(again).toBe(first);
+    expect(opens()).toBe(1);
+    expect(kit.dialled).toHaveLength(2);
+    expect(kit.attach.state().phase.kind).toBe('connected');
+  });
+
+  it('shows tmux’s own words when the Session is still gone', async () => {
+    const { kit, holder } = heldOn({ hosts: [fakeHost(), fakeHost()], sessionName: 'My Obsidian' });
+    await holder.open(opening({ sessionName: 'My Obsidian' }));
+    await connected(kit);
+    kit.hosts[0].exit('');
+    await settle();
+
+    await holder.open(opening({ sessionName: 'My Obsidian' }));
+    await settle();
+    kit.hosts[1].refuse("can't find session: My Obsidian");
+    await settle();
+
+    const phase = kit.attach.state().phase;
+    if (phase.kind !== 'disconnected') throw new Error('expected disconnected');
+    expect(phase.reason).toEqual({ kind: 'session-ended', detail: "can't find session: My Obsidian" });
   });
 });
 
@@ -2912,6 +2974,22 @@ describe('the Topic Place', () => {
     await settle();
 
     expect(kit.places.at(-1)?.tab?.page).toBe('https://github.com/');
+  });
+
+  it('goes back to the Place when the Topic is opened again after its Session ended', async () => {
+    const { kit, holder } = heldOn({ hosts: [twoWindows(), twoWindows()], topicId: 'a' });
+    await holder.open(opening({ topicId: 'a' }));
+    await connected(kit);
+    kit.hosts[0].exit('');
+    await settle();
+
+    await holder.open(opening({ topicId: 'a', restore: place() }));
+    await settle();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(where(kit)).toBe('@1 %3');
   });
 
   it('goes back to the Place of the Topic it holds, its Tab included, and of a Topic opened from another one', async () => {

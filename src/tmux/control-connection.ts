@@ -245,7 +245,7 @@ export async function openControlConnection(
     }
 
     if (event.kind === 'exit') {
-      finish(event.reason === '' ? 'The Session was detached' : event.reason, 'exit');
+      finish(event.reason === '' ? 'The Session ended' : event.reason, 'exit');
       return;
     }
 
