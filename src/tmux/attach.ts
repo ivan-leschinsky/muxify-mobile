@@ -190,7 +190,8 @@ export interface AttachState {
   input: InputNotice[];
   /**
    * The Topic Place's Browser Tab, which a Topic opened just now had on top.
-   * The Terminal Screen shows it, once: see takeTabToRestore.
+   * The Web View that the opener pushed with it checks it, once, against the
+   * Tabs the Host lists: see takeTabToRestore.
    */
   tabToRestore: ShownTab | null;
 }
@@ -833,7 +834,9 @@ export function openAttach(options: AttachOptions): Attach {
         selectPane(place.pane);
       }
       if (place.tab && state.topic?.id === place.topicId) {
-        shownTab = { token: ++tabTokens, tab: place.tab };
+        // The Web View that the opener pushed with the Place's Tab can be up
+        // already: its token stays the one that counts.
+        if (shownTab?.tab.url !== place.tab.url) shownTab = { token: ++tabTokens, tab: place.tab };
         change({ tabToRestore: shownTab });
       }
     } catch (error) {
@@ -1346,9 +1349,10 @@ export function openAttach(options: AttachOptions): Attach {
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
-      // The Topic held now is where the user is, so its own Place has nothing to add.
-      const restore = destination.restore && destination.topic?.id === destination.restore.topicId &&
-        destination.topic.id !== state.topic?.id ? destination.restore : null;
+      // Also for the Topic held now: Back from a Web View leaves its Tab in the
+      // Place, and opening the Topic again from the Host Screen shows it again.
+      const restore = destination.restore && destination.topic?.id === destination.restore.topicId
+        ? destination.restore : null;
       if (destination.topic === null) {
         if (destination.sessionName === state.sessionName) return;
         const topic = state.topic && lastTopic(state.topic.view);
@@ -1553,8 +1557,8 @@ export function openAttach(options: AttachOptions): Attach {
     showTab(tab: PlaceTab): number {
       shownTab = { token: ++tabTokens, tab };
       say(`the Web View shows ${tab.url}`);
-      if (state.tabToRestore) change({ tabToRestore: null });
-      else notePlace();
+      // A restore's Tab waits for the Web View that shows it to take it.
+      notePlace();
       return shownTab.token;
     },
 

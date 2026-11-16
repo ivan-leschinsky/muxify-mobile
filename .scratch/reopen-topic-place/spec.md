@@ -151,3 +151,48 @@ like other one-shot requests in this codebase. Pick the existing idiom.
 ## Out of scope
 
 Option B/C/D, Tabs in `topic show --json`, a Place shared with the Mac.
+
+## Revision 2 (2026-11-16): Back keeps the page
+
+Gleb expected Back on a page to go to the Topics list, and the Topic to open on
+the page again. Changed:
+
+- In a Topic, Back and the swipe from the edge on the Web View go to the Host
+  Screen and keep the Tab in the Topic Place. Without a Topic, Back goes to the
+  Session as before, because nothing would keep the page.
+- A restore runs also for the Topic that the Attach still holds. Before, it ran
+  only for a different Topic, so the Host Screen's card of the same Topic
+  showed the terminal.
+- A pick of the current Topic in the Title Sheet only closes the sheet.
+- The way from a page to its terminal is the Title Sheet's Window pick, which
+  clears the Tab.
+
+## Revision 3 (2026-11-16): one move each way
+
+Gleb saw two moves when a Topic opened on its page: the terminal slid in,
+then the page. Changed:
+
+- The screen that opens a Topic gets the Topic Place's Tab from the opener
+  (`useHostEntry`'s `onAttached(tab)`) and pushes the Web View alone. When
+  its slide ends, the Web View puts the Terminal Screen under itself with a
+  reset that keeps the top, so nothing moves. Two pushes, or one reset that
+  adds both, slid in the terminal first.
+- The Web View, not the Terminal Screen, takes `tabToRestore` and checks that
+  the Host still lists the Tab. `showTab` no longer clears it.
+- A Topic picked in the Web View's Title Sheet whose Place has a Tab replaces
+  the page with that one.
+- The swipe from the edge is off on a page in a Topic.
+- A cold start still pushes the Terminal Screen, then the page once the
+  Attach is up.
+
+## Revision 4 (2026-11-16): the swipe back
+
+Gleb wanted the swipe from the edge back. A page over the Terminal Screen
+shows the terminal under it while the swipe moves. Changed:
+
+- In a Topic, the Web View takes the Terminal Screen's place
+  (`router.replace`), right over the Host Screen. Back and the swipe are the
+  stack's own pop, and the Topic keeps the Tab. The Title Sheet's Window pick,
+  or a Tab the Host lists no more, replaces the Web View with the Terminal
+  Screen. No `usePreventRemove`, no terminal slipped under the page.
+- A Session's page (no Topic) still goes over its Terminal Screen.

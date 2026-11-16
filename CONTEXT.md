@@ -270,7 +270,8 @@ the Web View was on top, the Browser Tab and how far the page was scrolled. The
 phone keeps one for each Topic of each Host. It is the phone's own: the Mac
 moving tmux's active Window does not move it. The Attach writes it while it holds
 the Topic, when the Session, the active Window, the active Pane or the shown Tab
-changes. Opening the Topic again goes back to it: the Topic Place's Session
+changes. Opening the Topic again goes back to it, also when it is the Topic
+that the Attach still holds: the Topic Place's Session
 while the Topic lists it live, then its Window by id, else by index and name,
 then its Pane. When it has a Tab that the Host still lists, the Web View opens
 again; a Tab the Host lists no more leaves the user on the Pane. A pick in the
@@ -613,8 +614,13 @@ Without a Topic, it is the Session name over the page's title. A tap on the
 title opens the Title Sheet. A Window or Session pick there, or a Topic, goes
 to the Terminal Screen; a Tab pick shows that Tab in the same Web View. Reload,
 and a pull down on the page, load the page again. A page that does not load
-shows the reason and **Try again**. Back goes to the Session, which stayed
-attached, and clears the Tab from the Topic Place.
+shows the reason and **Try again**. In a Topic, Back goes to the Host Screen,
+as Back on the Terminal Screen does, and the Topic Place keeps the Tab, so
+opening the Topic again shows the page again. In a Topic, the page stands in
+the Terminal Screen's place, so the swipe from the edge shows the Host Screen
+under it, and the Title Sheet's Window pick puts the Terminal Screen back. A Window pick in the Title Sheet
+is the way to the terminal, and it clears the Tab. Without a Topic, Back goes
+to the Session, which stayed attached.
 _Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:

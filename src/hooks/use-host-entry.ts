@@ -5,6 +5,7 @@ import { ActionSheetIOS, Alert } from 'react-native';
 import { ended, IDLE, reached, send, type HostWrite } from '@/domain/host-write';
 import { describeError } from '@/lib/describe-error';
 import { deviceHostStore } from '@/storage/device-store';
+import type { PlaceTab } from '@/storage/records';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
 import type { TopicId } from '@/topics/environment';
@@ -27,7 +28,11 @@ interface Delivery {
   isCurrent: () => boolean;
 }
 
-export function useHostEntry(hostId: string, onAttached: () => void, fromAttach = false) {
+/**
+ * `onAttached` gets the Tab of the Topic Place the Attach goes back to, when it
+ * has one: the screen then shows the Terminal Screen and the Web View in one move.
+ */
+export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) => void, fromAttach = false) {
   const router = useRouter();
   const holder = useAttachHolder();
   const deliverSession = useOpenSession();
@@ -51,9 +56,10 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
     if (!delivery.isCurrent()) return;
     const session = chooseTopicSession(topic, hostId, recent, place);
     if (!session) throw new Error('This Topic has no live Session. Return Home and read it again.');
-    await deliverSession({ hostId, destination: { sessionName: session.name, topic: { id: topic.id, seed: topic },
-      restore: place?.session === session.name ? place : null }, ...delivery });
-    if (delivery.isCurrent()) onAttached();
+    const restore = place?.session === session.name ? place : null;
+    await deliverSession({ hostId, destination: { sessionName: session.name, topic: { id: topic.id, seed: topic }, restore },
+      ...delivery });
+    if (delivery.isCurrent()) onAttached(restore?.tab ?? null);
   }, [hostId, onAttached, deliverSession]);
 
   const readAndAttach = useCallback(async (id: TopicId, delivery: Delivery) => {
@@ -120,7 +126,7 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
   const openSession = useCallback((sessionName: string) => {
     run(null, async (delivery) => {
       await deliverSession({ hostId, destination: { sessionName, topic: null }, ...delivery });
-      if (delivery.isCurrent()) onAttached();
+      if (delivery.isCurrent()) onAttached(null);
     });
   }, [hostId, run, deliverSession, onAttached]);
 

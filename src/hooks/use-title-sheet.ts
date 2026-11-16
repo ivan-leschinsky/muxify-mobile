@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
+import type { PlaceTab } from '@/storage/records';
 import type { TopicRow } from '@/components/host-screen-row-view';
 import type { PreviewCard } from '@/components/picker-sheet';
 import type { TitlePick, TitleSheetProps } from '@/components/title-sheet';
@@ -32,8 +33,11 @@ export interface TitleSheetOptions {
   hostId: string | undefined;
   /** A Tab picked in the sheet, which has closed. */
   onOpenTab: (tab: BrowserTab) => void;
-  /** The user went to another Window, Session or Topic from the sheet, which has closed. */
-  onMoved?: () => void;
+  /**
+   * The user went to another Window, Session or Topic from the sheet, which
+   * has closed. `tab` is the Tab of the Topic Place of a Topic opened there.
+   */
+  onMoved?: (tab: PlaceTab | null) => void;
   /** The sheet is about to open: a screen closes its other sheets. */
   beforeOpen?: () => void;
   /** A Session picked while the Attach has stopped, which opens a new Attach. */
@@ -55,9 +59,9 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     chooserRevision.current += 1;
     setTitleSheet({ open: false });
   }, []);
-  const entered = useCallback(() => {
+  const entered = useCallback((tab: PlaceTab | null = null) => {
     closeChooser();
-    onMoved?.();
+    onMoved?.(tab);
   }, [closeChooser, onMoved]);
 
   const chooserLists = useChooserLists(hostId ?? '');
@@ -76,6 +80,11 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     closeChooser();
   }, [closeChooser]));
   const openTopic = useCallback((row: TopicRow) => {
+    // The Topic the user is in: nothing to open, and a restore would show its page again.
+    if (row.seed.id === state?.topic?.id) {
+      closeChooser();
+      return;
+    }
     if (row.seed.state === 'live') {
       const revision = chooserRevision.current;
       hostEntry.openTopic(row.seed, {
@@ -92,7 +101,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
         hostEntry.openTopic(row.seed);
       }
     }, SHEET_HANDOVER_MS);
-  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName]);
+  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName, state?.topic?.id]);
 
   /** The Session a switch is on its way to, whose row shows it is busy. */
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
@@ -244,7 +253,9 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     onOpenTab: openTab,
   };
 
-  return { sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic };
+  /** A Topic picked in the sheet is on its way: the Attach can already be in it. */
+  const openingTopic = hostEntry.busyTopic !== null;
+  return { sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic };
 }
 
 /** How long a sheet takes to leave, so the next one can be presented. */

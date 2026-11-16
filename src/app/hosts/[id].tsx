@@ -28,6 +28,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { placeTabRoute } from '@/browser/place-tab-route';
 import { FillPlaceSheet } from '@/components/fill-place-sheet';
 import { GoToList, type FolderRow } from '@/components/go-to-list';
 import {
@@ -63,7 +64,7 @@ import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host as HostRecord, RecentSession } from '@/storage/records';
+import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import type { TopicId } from '@/topics/environment';
 import { lastSnapshot } from '@/topics/host-topics';
@@ -155,12 +156,13 @@ export default function HostScreen() {
     setQuery('');
     setHighlighted(0);
   }, []);
-  const entered = useCallback(() => {
+  const entered = useCallback((tab: PlaceTab | null) => {
     closeGoTo();
-    router.push('/terminal');
+    // A Topic Place with a Tab: the page, in the Terminal Screen's place.
+    router.push(tab ? placeTabRoute(tab) : '/terminal');
   }, [closeGoTo, router]);
   const hostEntry = useHostEntry(id, entered);
-  const pick = useGoToPick(id, entered);
+  const pick = useGoToPick(id, useCallback(() => entered(null), [entered]));
 
   const sessions = useMemo(() => runningSessions(listing, topics) ?? [], [listing, topics]);
   const rows = goTo === null ? [] : goToRows({
