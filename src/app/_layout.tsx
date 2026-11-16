@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 
 import { chromeHeaderColors } from '@/constants/app-theme';
 import { KeyCommandsProvider, useKeyboardShortcuts } from '@/keyboard/key-commands';
+import { backSwipeOptions } from '@/navigation/back-swipe';
+import { CONTENT_POP } from '@/navigation/use-back-swipe';
 import { SettingsProvider, useSettings } from '@/settings/settings-context';
 import { AttachProvider } from '@/tmux/attach-context';
 
@@ -70,6 +72,7 @@ function AppStack() {
           // came from is a word the user already read.
           headerBackButtonDisplayMode: 'minimal',
           contentStyle: { backgroundColor: palette.background },
+          ...backSwipeOptions('anywhere', CONTENT_POP),
         }}>
         <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
@@ -147,10 +150,6 @@ function AppStack() {
             headerTransparent: false,
             headerBackVisible: true,
             title: 'Session',
-            // A swipe right on the Surface is the previous Pane. From iOS 26
-            // the system's back swipe starts anywhere on a screen, and it took
-            // that drag. Back stays in the Header and at the left edge.
-            fullScreenGestureEnabled: false,
           }}
         />
       </Stack>

@@ -36,6 +36,15 @@ jest.mock('expo-router', () => {
     },
   };
 });
+// Native views: the strip shows the tab on show, as the accessibility tree does.
+jest.mock('@/components/tab-swipe', () => ({
+  TabSwipe: ({ tab, header, renderTab }: {
+    tab: string;
+    header: (shown: string) => React.ReactNode;
+    renderTab: (each: string) => React.ReactNode;
+  }) => [header(tab), renderTab(tab)],
+}));
+jest.mock('@/navigation/use-back-swipe', () => ({ useBackSwipe: () => {} }));
 jest.mock('@expo/ui/swift-ui', () => {
   const through = ({ children }: { children?: React.ReactNode }) => children;
   return {

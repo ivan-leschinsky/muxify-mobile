@@ -69,6 +69,8 @@ import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
 import { panAxis, swipeOf, type PanAxis } from '@/lib/pan-axis';
+import { BACK_EDGE, startsAtBackEdge } from '@/navigation/back-swipe';
+import { useBackSwipe } from '@/navigation/use-back-swipe';
 import {
   anyArmed,
   commandChord,
@@ -390,6 +392,8 @@ export default function TerminalScreen() {
   const windowHeight = Math.max(0, rootBounds.height - (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) - clearance.resting);
   const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
   const selecting = selectionArea !== null;
+  // A handle of a Selection can sit at column 1, where the back swipe starts.
+  useBackSwipe(selecting ? 'off' : 'edge');
   /** The mouse layer's long press is still down. See MouseLayer. */
   const [mousePressHeld, setMousePressHeld] = useState(false);
   const windowArea = useMemo(
@@ -1685,6 +1689,8 @@ function PaneSurfaceView({
   const own = useRef<Grid>({ cols: slot.pane.width, rows: slot.rows });
   /** Where a touch on an inactive Pane started, so a drag is not a tap. */
   const from = useRef({ x: 0, y: 0 });
+  /** How far from the screen's left edge it started. See startsAtBackEdge. */
+  const fromEdge = useRef(0);
   /** How fast that touch is going sideways, which can make a short drag a swipe. */
   const sideways = useRef(createVelocityTracker());
   const paneId = slot.pane.id;
@@ -1759,6 +1765,8 @@ function PaneSurfaceView({
         // which says how far it has gone and ticks at its commit point.
         // Needs the local patch.
         ownsScrollGesture
+        // A drag right from the edge band is the back swipe's, not a Pane Swipe.
+        backEdge={BACK_EDGE}
         onScroll={({ nativeEvent }) =>
           onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
         }
@@ -1804,6 +1812,7 @@ function PaneSurfaceView({
           onStartShouldSetResponder={() => true}
           onResponderGrant={({ nativeEvent }: GestureResponderEvent) => {
             from.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+            fromEdge.current = nativeEvent.pageX;
             sideways.current.clear();
             sideways.current.add(nativeEvent.locationX, Date.now());
           }}
@@ -1811,7 +1820,11 @@ function PaneSurfaceView({
             const dx = nativeEvent.locationX - from.current.x;
             const dy = nativeEvent.locationY - from.current.y;
             sideways.current.add(nativeEvent.locationX, Date.now());
-            if (Math.hypot(dx, dy) > TAP_SLOP && panAxis(dx, dy) === 'horizontal') {
+            if (
+              Math.hypot(dx, dy) > TAP_SLOP &&
+              panAxis(dx, dy) === 'horizontal' &&
+              !startsAtBackEdge(fromEdge.current, dx)
+            ) {
               swipe.drag(dx, width, true);
             }
           }}
@@ -1826,7 +1839,7 @@ function PaneSurfaceView({
               return;
             }
             const direction =
-              panAxis(dx, dy) === 'horizontal'
+              panAxis(dx, dy) === 'horizontal' && !startsAtBackEdge(fromEdge.current, dx)
                 ? swipeOf(dx, width, sideways.current.velocity(Date.now()))
                 : null;
             if (direction) swipe.swipe(direction);
@@ -1898,8 +1911,14 @@ function MouseLayer({
   const size = useRef({ width: 0, height: 0 });
   const origin = useRef({ x: 0, y: 0 });
   const previous = useRef(0);
-  /** What the drag is for, or null while the touch could still be a tap. */
-  const axis = useRef<PanAxis | null>(null);
+  /**
+   * What the drag is for, or null while the touch could still be a tap. A
+   * drag right from the edge band is the back swipe's, and this layer lets it
+   * go by.
+   */
+  const axis = useRef<PanAxis | 'back' | null>(null);
+  /** How far from the screen's left edge the finger landed. */
+  const originEdge = useRef(0);
   /**
    * Where a horizontal drag began: where the finger left the tap slop, which
    * is where the Surface's own gesture counts from. The Pane does not jump.
@@ -2005,6 +2024,7 @@ function MouseLayer({
         // catching a scroll view does.
         stopCoasting();
         origin.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+        originEdge.current = nativeEvent.pageX;
         previous.current = nativeEvent.locationY;
         axis.current = null;
         carried.current = 0;
@@ -2029,7 +2049,11 @@ function MouseLayer({
         if (axis.current === null) {
           const dx = nativeEvent.locationX - origin.current.x;
           const dy = nativeEvent.locationY - origin.current.y;
-          if (Math.hypot(dx, dy) > TAP_SLOP) axis.current = panAxis(dx, dy);
+          if (Math.hypot(dx, dy) > TAP_SLOP) {
+            axis.current = startsAtBackEdge(originEdge.current, dx) && panAxis(dx, dy) === 'horizontal'
+              ? 'back'
+              : panAxis(dx, dy);
+          }
           if (axis.current !== null) stopHolding();
           if (axis.current === 'horizontal') {
             swipeFrom.current = nativeEvent.locationX;
@@ -2041,6 +2065,7 @@ function MouseLayer({
           onPressMove(lastPoint.current);
           return;
         }
+        if (axis.current === 'back') return;
         if (axis.current === 'horizontal') {
           sideways.current.add(nativeEvent.locationX, Date.now());
           swipe.drag(nativeEvent.locationX - swipeFrom.current, size.current.width, true);
@@ -2063,6 +2088,7 @@ function MouseLayer({
           onPressEnd({ x: nativeEvent.locationX, y: nativeEvent.locationY });
           return;
         }
+        if (axis.current === 'back') return;
         if (axis.current === 'horizontal') {
           const direction = swipeOf(
             nativeEvent.locationX - swipeFrom.current,
