@@ -17,7 +17,6 @@
 set -uo pipefail
 
 APP=dev.muxify.app
-SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
 
 # Reopen and Start Fresh are Mac commands on the Host's tmux server. Make sure
 # this one is the sandbox's before the suite stops any Session on it.
@@ -27,14 +26,7 @@ case "$(tmux display-message -p '#{socket_path}')" in
   *) echo "tmux is not the sandbox's server"; exit 1 ;;
 esac
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-path = sys.argv[1]
-settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
-json.dump(settings, open(path, "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 
 # One Dormant Topic: made with a Session at a folder of its own, pinned, and then
 # left with no live Session.

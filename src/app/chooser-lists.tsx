@@ -5,25 +5,15 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ShownListsSections } from '@/components/shown-lists-sections';
-import {
-  CHOOSER_LIST_NAMES,
-  HOST_SCREEN_LIST_NAMES,
-  hiddenChooserLists,
-  hiddenHostScreenLists,
-  moveChooserLists,
-  moveHostScreenLists,
-  mustStayOn,
-  switchChooserList,
-  switchHostScreenList,
-} from '@/settings/settings';
-import { useChooserLists, useHostLists, useSettings } from '@/settings/settings-context';
+import { CHOOSER_LIST_NAMES, hiddenChooserLists, moveChooserLists, switchChooserList } from '@/settings/settings';
+import { useChooserLists, useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 
-export default function HostListsScreen() {
+/** The lists of the Title Sheet for one Host: which ones show, and in which order. */
+export default function ChooserListsScreen() {
   const { hostId } = useLocalSearchParams<{ hostId: string }>();
   const chooserLists = useChooserLists(hostId);
-  const lists = useHostLists(hostId);
-  const { updateHostLists, updateChooserLists, appearance, palette } = useSettings();
+  const { updateChooserLists, appearance, palette } = useSettings();
   const [hostName, setHostName] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
@@ -36,7 +26,7 @@ export default function HostListsScreen() {
   }, [hostId]);
   return (
     <View style={styles.fill}>
-      <Stack.Screen options={{ title: hostName === null ? 'Lists' : `${hostName} lists` }} />
+      <Stack.Screen options={{ title: hostName === null ? 'Chooser' : `${hostName} chooser` }} />
       <Host style={styles.fill} matchContents={false}>
         <Form modifiers={[
           environment('colorScheme', appearance),
@@ -53,23 +43,6 @@ export default function HostListsScreen() {
             }>
             {null}
           </Section>
-          <ShownListsSections
-            title="Host Screen"
-            id="host-screen"
-            shown={lists}
-            hidden={hiddenHostScreenLists(lists)}
-            names={HOST_SCREEN_LIST_NAMES}
-            mustStay={(list) => mustStayOn(lists, list)}
-            onShow={(list) => updateHostLists(hostId, switchHostScreenList(lists, list, true))}
-            onHide={(list) => updateHostLists(hostId, switchHostScreenList(lists, list, false))}
-            onMove={(sources, destination) => updateHostLists(hostId, moveHostScreenLists(lists, sources, destination))}
-            footer={
-              `The ${hostName ?? 'Host'} screen shows these lists from top to bottom. A Session shows in one list only. ` +
-              'A Session in a Topic shows under its Topic. A Session in Recent Sessions does not show again in Sessions. ' +
-              'Keep Sessions or Topics shown, so that you can reach every Session.'
-            }
-            palette={palette}
-          />
           <ShownListsSections
             title="Title chooser"
             id="chooser"

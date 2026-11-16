@@ -21,14 +21,19 @@ export type AddSessionRead = { kind: 'added'; session: string } | { kind: 'faile
  */
 export function freeSessionName(
   folder: string,
-  choices: readonly SessionPathChoice[],
+  choices: readonly Pick<SessionPathChoice, 'directory' | 'name'>[],
   snapshot: EnvironmentSnapshot,
   topic: TopicId,
 ): string {
   const base = choices.find((choice) => choice.directory === folder)?.name ?? folderSessionName(folder);
-  const taken = new Set(
-    snapshot.sessions.filter((session) => session.topic === topic).map(({ name }) => withoutSlug(name)),
+  return availableName(
+    base,
+    new Set(snapshot.sessions.filter((session) => session.topic === topic).map(({ name }) => withoutSlug(name))),
   );
+}
+
+/** The Host's `SessionNaming.available`: `base`, or `base+2`, `+3` and so on while a Session has the name. */
+export function availableName(base: string, taken: ReadonlySet<string>): string {
   if (!taken.has(base)) return base;
   const stem = base.replace(/\+([2-9]|[1-9]\d+)$/, '');
   let number = 2;
@@ -37,7 +42,7 @@ export function freeSessionName(
 }
 
 /** The Host's `SessionPath.sessionName` of the folder's last part: no spaces, and `_` for `.` and `:`, which tmux refuses. */
-function folderSessionName(folder: string): string {
+export function folderSessionName(folder: string): string {
   const last = folder.replace(/\/+$/, '').split('/').pop() ?? '';
   return last.replaceAll(' ', '').replace(/[.:]/g, '_');
 }

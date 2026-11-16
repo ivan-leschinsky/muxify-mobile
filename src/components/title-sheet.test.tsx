@@ -67,7 +67,7 @@ it('shows Topics even when there are no Sessions', async () => {
   props.sessions.cards = [];
   props.lists = ['sessions', 'windows', 'topics'];
   props.topics = {
-    sections: [{ id: 'topics', title: 'Topics', footer: null, rows: [{ kind: 'note', text: 'A Topic read is pending.' }] }],
+    sections: [{ id: 'topics', title: 'Topics', rows: [{ kind: 'note', text: 'A Topic read is pending.' }] }],
     palette: require('@/constants/app-theme').AppPalettes.dark,
     onOpenTopic: jest.fn(), onRetry: jest.fn(),
   };
@@ -94,7 +94,7 @@ it('passes an Empty Topic pick to the existing Host entry action', async () => {
   };
   props.lists = ['sessions', 'windows', 'topics'];
   props.topics = {
-    sections: [{ id: 'topics', title: 'Topics', footer: null, rows: [topic] }],
+    sections: [{ id: 'topics', title: 'Topics', rows: [topic] }],
     palette: require('@/constants/app-theme').AppPalettes.dark,
     onOpenTopic: jest.fn(), onRetry: jest.fn(),
   };

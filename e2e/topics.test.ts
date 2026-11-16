@@ -77,9 +77,9 @@ describe('Topics against the real muxify', () => {
     console.log(`probe: ${log.join('; ')}`);
 
     const sections = hostScreen({
-      settings: { hostScreenLists: ['topics'] },
-      recent: [],
+      tab: 'topics',
       listing: UNASKED,
+      attach: null,
       topics: settled(TOPICS_UNASKED, read),
       // With In Play, a new Topic waits on the Bench, which shows its cards only when opened.
       opened: new Set(['bench']),

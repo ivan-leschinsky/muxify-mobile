@@ -3,40 +3,46 @@ import UIKit
 
 /// One Keyboard Shortcut, as JS hands it over. `key` is a `UIKeyCommand`
 /// input: a character such as "d", or a constant such as
-/// `UIKeyCommand.inputLeftArrow`. Command is always held.
+/// `UIKeyCommand.inputLeftArrow`. Command is held, except for a List Key,
+/// which JS hands over only while a list has the keys.
 struct KeyCommandRecord: Record {
   @Field var id: String = ""
   @Field var title: String = ""
   @Field var key: String = ""
+  @Field var command: Bool = true
   @Field var shift: Bool = false
   @Field var option: Bool = false
   @Field var control: Bool = false
 
-  var chord: Chord { Chord(key: key, shift: shift, option: option, control: control) }
+  var chord: Chord { Chord(key: key, command: command, shift: shift, option: option, control: control) }
 }
 
-/// A key pressed with command, and the other modifiers held with it. The
-/// Key Row builds one in JS. A hardware key gives one through `init?(_:)`.
+/// A key and the modifiers held with it. The Key Row builds one in JS, with
+/// command. A hardware key gives one through `init?(_:)`.
 struct Chord: Equatable {
   var key: String
+  var command: Bool
   var shift: Bool
   var option: Bool
   var control: Bool
 
-  /// The chord of a hardware key, or nil when command is not held.
+  /// The chord of a hardware key, or nil for a key with no input, such as a
+  /// modifier on its own.
   init?(_ uiKey: UIKey) {
     let flags = uiKey.modifierFlags
-    guard flags.contains(.command), let key = Self.input(of: uiKey) else { return nil }
+    guard let key = Self.input(of: uiKey) else { return nil }
     self.init(
       key: key,
+      command: flags.contains(.command),
       shift: flags.contains(.shift),
       option: flags.contains(.alternate),
       control: flags.contains(.control)
     )
   }
 
-  init(key: String, shift: Bool, option: Bool, control: Bool) {
+  init(key: String, command: Bool, shift: Bool, option: Bool, control: Bool) {
     self.key = key
+    self.command = command
     self.shift = shift
     self.option = option
     self.control = control
@@ -89,7 +95,7 @@ public class KeyCommandsModule: Module {
 
     Function("perform") { (chord: ChordRecord) -> Bool in
       KeyCommandRegistry.shared.perform(
-        Chord(key: chord.key, shift: chord.shift, option: chord.option, control: chord.control)
+        Chord(key: chord.key, command: true, shift: chord.shift, option: chord.option, control: chord.control)
       )
     }
 
@@ -187,7 +193,7 @@ final class KeyCommandRegistry {
   }
 
   private static func command(_ record: KeyCommandRecord) -> UIKeyCommand {
-    var flags: UIKeyModifierFlags = [.command]
+    var flags: UIKeyModifierFlags = record.command ? [.command] : []
     if record.shift { flags.insert(.shift) }
     if record.option { flags.insert(.alternate) }
     if record.control { flags.insert(.control) }

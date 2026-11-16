@@ -1,9 +1,11 @@
 import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 
+import { createGoToCache, type GoToCache } from './go-to-cache';
 import { createHostStore, type HostStore, type JsonFile, type Secrets } from './store';
 
 const RECORDS_FILE = 'muxify-records.json';
+const GO_TO_FILE = 'muxify-go-to.json';
 
 /**
  * The real storage behind the Hosts list: a JSON file in the app's documents
@@ -13,18 +15,18 @@ const RECORDS_FILE = 'muxify-records.json';
  * testable without a device — which is where all the interesting behaviour is,
  * such as not orphaning a credential two Hosts share.
  */
-const jsonFile: JsonFile = {
+const jsonFile = (name: string): JsonFile => ({
   async read() {
-    const file = new File(Paths.document, RECORDS_FILE);
+    const file = new File(Paths.document, name);
     if (!file.exists) return null;
     return file.text();
   },
   async write(contents: string) {
-    const file = new File(Paths.document, RECORDS_FILE);
+    const file = new File(Paths.document, name);
     if (!file.exists) file.create();
     file.write(contents);
   },
-};
+});
 
 const secrets: Secrets = {
   get: (key) => SecureStore.getItemAsync(key),
@@ -41,6 +43,14 @@ let store: HostStore | undefined;
 
 /** The app's one store. */
 export function deviceHostStore(): HostStore {
-  store ??= createHostStore(jsonFile, secrets);
+  store ??= createHostStore(jsonFile(RECORDS_FILE), secrets);
   return store;
+}
+
+let goToCache: GoToCache | undefined;
+
+/** The app's one copy of each Host's Go to paths. */
+export function deviceGoToCache(): GoToCache {
+  goToCache ??= createGoToCache(jsonFile(GO_TO_FILE));
+  return goToCache;
 }

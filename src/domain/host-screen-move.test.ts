@@ -12,7 +12,7 @@ const open = (id: string): HostScreenRow => ({ kind: 'open-place', id });
 const section = (id: HostScreenSection['id'], rows: HostScreenRow[]): HostScreenSection => ({
   id,
   title: id,
-  footer: null,
+ 
   rows,
 });
 

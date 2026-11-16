@@ -1,18 +1,33 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
-import type { Settings } from '@/settings/settings';
-import type { RecentSession } from '@/storage/records';
-import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
+import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
-/** A Session Muxify remembers opening, as the Recent Sessions and Sessions lists show it. */
-export interface RecentRow {
-  kind: 'recent';
-  name: string;
-  lastOpenedAt: string;
-  windowCount: number | undefined;
+/**
+ * The two views of the Host Screen, which are the two views of the Mac's
+ * Sidebar: the Host's Topics, or every running Session.
+ */
+export type HostScreenTab = 'topics' | 'sessions';
+
+/**
+ * The tabs the Host Screen shows, in their order. The Host's Config decides,
+ * through `sidebar` in the snapshot, so the Mac and the phone show the same
+ * views. A Host CLI that does not say shows both. A Host with no Topics to
+ * read (no Host CLI, an old one, or no snapshot yet) shows the Sessions only.
+ */
+export function hostScreenTabs(topics: HostTopics): readonly [HostScreenTab, ...HostScreenTab[]] {
+  const snapshot = lastSnapshot(topics);
+  if (snapshot === null || topics.kind === 'old' || topics.kind === 'updating') return ['sessions'];
+  const { sidebar } = snapshot;
+  if (sidebar === null || sidebar.topics === sidebar.sessions) return ['topics', 'sessions'];
+  return sidebar.topics ? ['topics'] : ['sessions'];
+}
+
+/** The tab to show: the one the user last chose on this Host when it is on show, else the first. */
+export function tabOnShow(last: HostScreenTab | undefined, tabs: readonly [HostScreenTab, ...HostScreenTab[]]): HostScreenTab {
+  return last !== undefined && tabs.includes(last) ? last : tabs[0];
 }
 
 /**
@@ -24,10 +39,18 @@ export interface TagMark {
   color: string | null;
 }
 
+/** A running Session of the Host. */
+export interface SessionRow {
+  kind: 'session';
+  name: string;
+  windowCount: number | undefined;
+  /** The Topic it is in, or "No Topic". Null where the row says nothing about Topics. */
+  topicLabel: string | null;
+}
+
 /** One row of a Host Screen section. A section with no Session rows has one of the others. */
 export type HostScreenRow =
-  | RecentRow
-  | { kind: 'available'; name: string }
+  | SessionRow
   /** The first question to the Host is still in flight, or the Host CLI install is running. */
   | { kind: 'checking'; text: string }
   /** The Host could not be asked. The screen offers Retry. */
@@ -63,19 +86,25 @@ export type HostScreenRow =
 export type OpenableRow = 'no-topic' | 'bench';
 
 export interface HostScreenSection {
-  id: 'recent' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench' | 'no-topic';
+  id: 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench' | 'no-topic';
   /** Null when the section starts with its own named row. */
   title: string | null;
-  footer: string | null;
   rows: HostScreenRow[];
 }
 
+/** Where the Attach is, for the Bench peek. */
+export interface AttachPlace {
+  sessionName: string;
+  /** The Topic the Attach holds, or null when it holds none. */
+  topic: TopicId | null;
+}
+
 export interface HostScreenInput {
-  settings: Pick<Settings, 'hostScreenLists'>;
-  /** This Host's Recent Sessions, newest first. */
-  recent: RecentSession[];
+  tab: HostScreenTab;
   listing: Listing;
   topics: HostTopics;
+  /** The Attach on this Host, or null when there is none. */
+  attach: AttachPlace | null;
   /** The rows the user has opened. */
   opened: ReadonlySet<OpenableRow>;
   /** The appearance the screen is drawn in, which picks each Tag's colour. */
@@ -83,100 +112,33 @@ export interface HostScreenInput {
 }
 
 /**
- * The sections of the Host Screen, in the order the user set in Settings.
+ * The sections of one tab of the Host Screen.
  *
- * A Session shows in one list only, because two rows would be two ways to open
- * one Session. Its Topic comes first, once a snapshot says which Topic that is.
- * Recent Sessions comes next, and the Sessions list has the rest. With the
- * Sessions list off, the Topics list ends with a No Topic row in its place, and
- * the same rule holds for the Sessions under it.
- *
- * Home draws these before the Host has answered, and then every remembered
- * Session is shown (fail open). The Host Screen does not: it waits for
- * firstReadAnswered. A refusal is an answer, and under it the remembered
- * Sessions show, because a Host that is unreachable or has no tmux server yet
- * must not look like a Host you have never used.
- *
- * A remembered Session the Host no longer has is dropped from the lists, but
- * never from the records: kill it from a laptop and make it again tomorrow
- * and the row comes back where it was, still knowing when you last opened it.
+ * The Topics tab is the Mac's Topics view: Pinned, In Play, the Guests, the
+ * Bench row, and the No Topic row. The Sessions tab is the Mac's Sessions
+ * view: every running Session in the order the Host lists them, with its Topic
+ * under the name, and no Bench.
  */
-export function hostScreen({
-  settings,
-  recent,
-  listing,
-  topics,
-  opened,
-  appearance,
-}: HostScreenInput): HostScreenSection[] {
-  const lists = settings.hostScreenLists;
-  const recentOn = lists.includes('recent');
-  const snapshot = lastSnapshot(topics);
-  const inTopics = lists.includes('topics') && snapshot ? namesInTopics(snapshot) : NONE;
-
-  const outOfTopics = recent.filter((session) => !inTopics.has(session.name));
-  const listingOutOfTopics = without(listing, inTopics);
-  const inRecent: ReadonlySet<string> = recentOn
-    ? new Set(outOfTopics.map((session) => session.name))
-    : NONE;
-
-  return lists.flatMap((list) => {
-    switch (list) {
-      case 'topics':
-        return topicsList(topics, {
-          opened,
-          appearance,
-          withNoTopic: !lists.includes('sessions'),
-          leaveOut: inRecent,
-        });
-      case 'recent':
-        return [recentList(outOfTopics, listingOutOfTopics)];
-      case 'sessions':
-        return [sessionsList(outOfTopics, listingOutOfTopics, recentOn)];
-    }
-  });
+export function hostScreen({ tab, listing, topics, attach, opened, appearance }: HostScreenInput): HostScreenSection[] {
+  return tab === 'topics'
+    ? topicsList(topics, { opened, appearance, withNoTopic: true, attach })
+    : [sessionsList(listing, topics)];
 }
 
 /**
  * Whether the Host Screen has its first answer from the Host.
  *
- * Until then the screen draws none of the Host's rows. The Recent Sessions are
- * the phone's own records and cannot yet say which of them a Topic holds, so a
- * Session drawn before the Topics land jumps from Recent Sessions into its
- * Topic. A later read carries the last answer, so only the first read waits.
- * A refusal counts as an answer, whatever the Topics are doing: a Host that is
- * no longer saved never gets its Topics read.
+ * Until then the screen draws none of the Host's rows: the tabs come from the
+ * first Topics read, and a screen drawn before it would change its tabs under
+ * the user. A later read carries the last answer, so only the first read
+ * waits. A refusal counts as an answer, whatever the Topics are doing: a Host
+ * that is no longer saved never gets its Topics read.
  */
-export function firstReadAnswered({
-  settings,
-  listing,
-  topics,
-}: Pick<HostScreenInput, 'settings' | 'listing' | 'topics'>): boolean {
+export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'listing' | 'topics'>): boolean {
   if (listing.phase === 'failed') return true;
   if (listing.sessions === undefined) return false;
-  return !(settings.hostScreenLists.includes('topics') && topics.kind === 'loading' && topics.last === null);
+  return !(topics.kind === 'loading' && topics.last === null);
 }
-
-/**
- * The rows Home shows of one Host. With the Topics list on and the Host's
- * Topics read, that is every Pinned, In Play and Guest card: the Host's live
- * work must not fall off Home behind an empty place. Otherwise the first `limit`
- * rows of the Host Screen, counted across its sections.
- */
-export function homeRows(input: HostScreenInput, limit: number): HostScreenRow[] {
-  const sections = hostScreen(input);
-  const snapshot = lastSnapshot(input.topics);
-  if (input.settings.hostScreenLists.includes('topics') && snapshot) {
-    return sections
-      .filter((section) => HOME_SECTIONS.has(section.id))
-      .flatMap((section) => section.rows.filter((row) => row.kind !== 'open-place'));
-  }
-  return sections.flatMap((section) => section.rows).slice(0, limit);
-}
-
-const HOME_SECTIONS: ReadonlySet<HostScreenSection['id']> = new Set(['pinned', 'in-play', 'guests']);
-
-const NONE: ReadonlySet<string> = new Set();
 
 /**
  * The Host's Topics alone, for a list that shows the Host's Sessions itself:
@@ -184,7 +146,7 @@ const NONE: ReadonlySet<string> = new Set();
  * there are none. The Bench is open, because nothing opens in place there.
  */
 export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
-  return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, leaveOut: NONE })
+  return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
     .map((section) => ({
       ...section,
       title: SECTION_TITLES[section.id],
@@ -194,7 +156,6 @@ export function topicSections(topics: HostTopics, appearance: ColorAppearance): 
 }
 
 const SECTION_TITLES: Record<HostScreenSection['id'], string> = {
-  recent: 'Recent Sessions',
   sessions: 'Sessions',
   topics: 'Topics',
   pinned: 'Pinned',
@@ -208,27 +169,13 @@ const BENCH_OPENED: ReadonlySet<OpenableRow> = new Set(['bench']);
 
 const ABOUT_TOPICS: ReadonlySet<HostScreenRow['kind']> = new Set(['topic', 'checking', 'refused', 'note']);
 
-function namesInTopics(snapshot: EnvironmentSnapshot): ReadonlySet<string> {
-  return new Set(
-    snapshot.sessions.filter((session) => session.topic !== null).map((session) => session.name),
-  );
-}
-
-/** The Listing with some Sessions taken out of what it last answered. */
-function without(listing: Listing, names: ReadonlySet<string>): Listing {
-  if (names.size === 0 || listing.phase === 'failed' || listing.sessions === undefined) {
-    return listing;
-  }
-  return { ...listing, sessions: listing.sessions.filter((session) => !names.has(session.name)) };
-}
-
 interface CardsContext {
   opened: ReadonlySet<OpenableRow>;
   appearance: ColorAppearance;
   /** Whether the list ends with the No Topic row. */
   withNoTopic: boolean;
-  /** Sessions another list already shows, which the No Topic row leaves out. */
-  leaveOut: ReadonlySet<string>;
+  /** Where the Attach is, or null when the list has no Bench peek. */
+  attach: AttachPlace | null;
 }
 
 /**
@@ -237,33 +184,37 @@ interface CardsContext {
  * the last snapshot's cards.
  */
 function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
-  const above = (row: HostScreenRow, last: EnvironmentSnapshot | null): HostScreenSection[] => {
-    if (!last) return [topicsSection('topics', 'Topics', [row])];
-    const [first, ...rest] = cardSections(last, context);
-    return [{ ...first, rows: [row, ...first.rows] }, ...rest];
-  };
+  const last = lastSnapshot(topics);
+  if (topics.kind === 'absent') return [topicsSection('topics', 'Topics', [{ kind: 'note', text: 'No Topics on this Host' }])];
+  if (topics.kind === 'loading' && last === null) {
+    return [topicsSection('topics', 'Topics', [{ kind: 'checking', text: 'Checking Topics…' }])];
+  }
+  const notice = topicsNotice(topics);
+  if (last === null) return [topicsSection('topics', 'Topics', notice)];
+  const [first, ...rest] = cardSections(last, context);
+  return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
+}
+
+/** The row that says why the Topics are not as the Host has them now: an install, an old Host CLI or a failed read. */
+function topicsNotice(topics: HostTopics): HostScreenRow[] {
   switch (topics.kind) {
-    case 'absent':
-      return above({ kind: 'note', text: 'No Topics on this Host' }, null);
     case 'installing':
-      return above({ kind: 'checking', text: 'Installing Muxify on this Host…' }, null);
-    case 'old': {
-      const text =
-        topics.failure === undefined
+      return [{ kind: 'checking', text: 'Installing Muxify on this Host…' }];
+    case 'old':
+      return [{
+        kind: 'note',
+        text: topics.failure === undefined
           ? 'Update Muxify on this Host'
-          : `Update Muxify on this Host. Could not update it: ${topics.failure}`;
-      return above({ kind: 'note', text }, topics.last);
-    }
+          : `Update Muxify on this Host. Could not update it: ${topics.failure}`,
+      }];
     case 'updating':
-      return above({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topics.last);
-    case 'loading':
-      return topics.last
-        ? cardSections(topics.last, context)
-        : above({ kind: 'checking', text: 'Checking Topics…' }, null);
+      return [{ kind: 'checking', text: 'Updating Muxify on this Host…' }];
     case 'failed':
-      return above({ kind: 'refused', message: topics.error }, topics.last);
+      return [{ kind: 'refused', message: topics.error }];
+    case 'absent':
+    case 'loading':
     case 'listed':
-      return cardSections(topics.snapshot, context);
+      return [];
   }
 }
 
@@ -272,7 +223,7 @@ function topicsSection(
   title: string | null,
   rows: HostScreenRow[],
 ): HostScreenSection {
-  return { id, title, footer: null, rows };
+  return { id, title, rows };
 }
 
 /**
@@ -296,44 +247,56 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
   const sessions = new Map(snapshot.sessions.map((session) => [session.id, session]));
   const rows = (cards: Card[], section: CardSection) =>
     cards.map((card) => cardRow(card, { section, names, colors, sessions }));
-  const pinned = rows(snapshot.pinned, 'pinned');
-  const noTopic = noTopicRows(snapshot, names, context);
   const { unpinned } = snapshot;
+  const noTopicOpened = context.opened.has('no-topic');
+  const peek = benchPeek(snapshot, context.attach);
 
   const benchOpened = context.opened.has('bench');
-  const bench: HostScreenRow[] =
-    unpinned.bench.length === 0
-      ? []
-      : [{ kind: 'bench', opened: benchOpened }, ...(benchOpened ? rows(unpinned.bench, 'bench') : [])];
+  const benchCards = benchOpened ? unpinned.bench : unpinned.bench.filter((card) => card === peek.card);
+  const bench: HostScreenRow[] = [
+    ...(unpinned.bench.length === 0 ? [] : [{ kind: 'bench' as const, opened: benchOpened }]),
+    // The opened No Topic row lists the Session itself.
+    ...(peek.session === null || noTopicOpened || !context.withNoTopic ? [] : [sessionRow(peek.session, null)]),
+    ...rows(benchCards, 'bench'),
+  ];
+  const noTopic = context.withNoTopic ? snapshot.no_topic.flatMap((id) => sessions.get(id) ?? []) : [];
   const sections = [
-    topicsSection('pinned', 'Pinned', pinned),
+    topicsSection('pinned', 'Pinned', rows(snapshot.pinned, 'pinned')),
     topicsSection('in-play', 'In Play', rows(unpinned.places, 'in-play')),
     topicsSection('guests', 'Guests', rows(unpinned.guests, 'guests')),
     topicsSection('bench', null, bench),
-    topicsSection('no-topic', null, noTopic),
+    topicsSection('no-topic', null, noTopic.length === 0 ? [] : [
+      { kind: 'no-topic', count: noTopic.length, opened: noTopicOpened },
+      ...(noTopicOpened ? noTopic.map((session) => sessionRow(session, null)) : []),
+    ]),
   ].filter((section) => section.rows.length > 0);
   return sections.length > 0
     ? sections
     : [topicsSection('in-play', 'In Play', [{ kind: 'note', text: 'No Topics yet.' }])];
 }
 
-/** The No Topic row, and the Sessions under it once it is opened, in the order they came. */
-function noTopicRows(
+/**
+ * What shows of the place the Attach is in while the Bench row hides it, as
+ * the Mac shows the card of its Location: the Benched card of the Attach's
+ * Topic or Locked Session, or the Attach's Session when it is in No Topic.
+ */
+function benchPeek(
   snapshot: EnvironmentSnapshot,
-  names: ReadonlyMap<SessionId, string>,
-  context: CardsContext,
-): HostScreenRow[] {
-  if (!context.withNoTopic) return [];
-  const sessions = snapshot.no_topic.flatMap((id) => {
-    const name = names.get(id);
-    return name === undefined || context.leaveOut.has(name) ? [] : [name];
-  });
-  if (sessions.length === 0) return [];
-  const opened = context.opened.has('no-topic');
-  return [
-    { kind: 'no-topic', count: sessions.length, opened },
-    ...(opened ? sessions.map((name): HostScreenRow => ({ kind: 'available', name })) : []),
-  ];
+  attach: AttachPlace | null,
+): { card: Card | null; session: SnapshotSession | null } {
+  const session = attach === null ? undefined : snapshot.sessions.find(({ name }) => name === attach.sessionName);
+  if (attach === null || session === undefined) return { card: null, session: null };
+  const topic = attach.topic ?? session.topic;
+  const card = snapshot.unpinned.bench.find((candidate) =>
+    candidate.kind === 'topic' ? candidate.topic.id === topic : candidate.kind === 'session' && candidate.sessions[0] === session.id);
+  return {
+    card: card ?? null,
+    session: topic === null && snapshot.no_topic.includes(session.id) ? session : null,
+  };
+}
+
+function sessionRow(session: SnapshotSession, topicLabel: string | null): SessionRow {
+  return { kind: 'session', name: session.name, windowCount: session.windows?.length, topicLabel };
 }
 
 /**
@@ -386,73 +349,50 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
 }
 
 /**
- * The Recent Sessions list: the Sessions this phone opened that the Host still
- * has, newest first. Before the Host answers, every one of them (fail open).
+ * The Sessions tab: every running Session in the order the Host lists them,
+ * which is the order the Mac's Sessions view shows. A Host with Topics says
+ * which Topic each Session is in. A row above them says why the Host has no
+ * Topics tab, when the Host CLI is old, is being installed, or failed.
  */
-function recentList(recent: RecentSession[], listing: Listing): HostScreenSection {
-  const listed = lastAnswer(listing);
-  const onHost = new Map(listed?.map((session) => [session.name, session]));
-  const rows: HostScreenRow[] = recent.flatMap((session) => {
-    const live = onHost.get(session.name);
-    if (listed !== undefined && !live) return [];
-    return [recentRow(session, live?.windowCount)];
-  });
-  return {
-    id: 'recent',
-    title: 'Recent Sessions',
-    footer: null,
-    rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'Nothing opened on this Host yet.' }],
-  };
-}
-
-/**
- * The Sessions list: the Host's Sessions in the order the Host lists them,
- * which is the order the Mac shows. With Recent Sessions on, the ones in it
- * are left out. With it off, a remembered Session keeps its Recent row here,
- * so it can still be forgotten or disconnected, and before the Host answers
- * the remembered Sessions show (fail open).
- */
-function sessionsList(
-  recent: RecentSession[],
-  listing: Listing,
-  recentOn: boolean,
-): HostScreenSection {
-  const listed = lastAnswer(listing);
-  const remembered = new Map(recent.map((session) => [session.name, session]));
-
-  const rows: HostScreenRow[] =
-    listed === undefined
-      ? [
-          ...(recentOn ? [] : recent.map((session) => recentRow(session, undefined))),
-          unansweredRow(listing),
-        ]
-      : listed.flatMap((live): HostScreenRow[] => {
-          const session = remembered.get(live.name);
-          if (!session) return [{ kind: 'available', name: live.name }];
-          return recentOn ? [] : [recentRow(session, live.windowCount)];
-        });
-
+function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
+  const rows: HostScreenRow[] = runningSessions(listing, topics)?.map((session) => ({
+    kind: 'session',
+    name: session.name,
+    windowCount: session.windowCount,
+    topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
+  })) ?? [unansweredRow(listing)];
+  const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
   return {
     id: 'sessions',
-    title: 'Sessions',
-    footer:
-      recentOn && rows.some((row) => row.kind === 'available')
-        ? 'Opening one adds it to Recent Sessions.'
-        : null,
-    rows:
-      rows.length > 0
-        ? rows
-        : [{ kind: 'note', text: recentOn ? 'No other Sessions on this Host.' : 'No Sessions on this Host.' }],
+    title: null,
+    rows: [...notice, ...(rows.length > 0 ? rows : [{ kind: 'note' as const, text: 'No Sessions on this Host.' }])],
   };
 }
 
-function recentRow(session: RecentSession, windowCount: number | undefined): RecentRow {
-  return {
-    kind: 'recent',
-    name: session.name,
-    lastOpenedAt: session.lastOpenedAt,
-    windowCount,
-  };
+/** A running Session of the Listing, joined with what the Host's Topics say of it. */
+export interface RunningSession {
+  name: string;
+  windowCount: number | undefined;
+  /** The label of its Topic, or null for a Session in no Topic. Undefined when the Host has not said. */
+  topicLabel: string | null | undefined;
+}
+
+/** The Host's Sessions in the order the Host lists them, or undefined while the Host has no answer. */
+export function runningSessions(listing: Listing, topics: HostTopics): RunningSession[] | undefined {
+  const snapshot = lastSnapshot(topics);
+  const bySession = new Map(snapshot?.sessions.map((session) => [session.name, session]));
+  const labels = new Map(
+    snapshot === null ? [] : [...snapshot.pinned, ...snapshot.unpinned.places, ...snapshot.unpinned.guests, ...snapshot.unpinned.bench]
+      .flatMap((card): [TopicId, string][] => (card.kind === 'topic' ? [[card.topic.id, card.topic.label]] : [])),
+  );
+  return lastAnswer(listing)?.map((live) => {
+    const known = bySession.get(live.name);
+    return {
+      name: live.name,
+      windowCount: live.windowCount ?? known?.windows?.length,
+      topicLabel: known === undefined ? undefined : known.topic === null ? null : labels.get(known.topic),
+    };
+  });
 }
 
 /**

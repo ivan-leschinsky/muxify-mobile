@@ -110,8 +110,7 @@ python3 - "$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP
 import json, sys
 path = sys.argv[1]
 settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
+settings.pop("hostScreenTabs", None)
 records = json.load(open(path.replace("muxify-settings.json", "muxify-records.json")))
 settings["chooserListPreferences"] = {host["id"]: ["windows", "topics"] for host in records["hosts"]}
 json.dump(settings, open(path, "w"))

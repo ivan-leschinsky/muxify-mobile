@@ -36,6 +36,9 @@ press "label=\"Session 0\""
 # its presence says the Surface laid out, the Connection is attached and the
 # Topology is in.
 wait "id=\"pane-command\"" 20000
+# A tap within about a second of the header's program line can be lost on
+# the base app, so let the Session settle first.
+wait 1000
 
 # The title opens the Title Sheet, waited for by its own close button.
 press "id=\"header-title\""

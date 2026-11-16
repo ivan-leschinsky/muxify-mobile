@@ -36,7 +36,6 @@ export function FillPlaceSheet({
 }) {
   const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
   const screen = useWindowDimensions();
-  const [openedAt] = useState(() => new Date());
   const height = screen.height * 0.65;
   const groups = choices === null ? [] : [
     { title: 'Guests', rows: choices.guests },
@@ -78,7 +77,7 @@ export function FillPlaceSheet({
                       </Text>
                       {group.rows.map((row) => (
                         <HStack key={row.id} modifiers={[frame({ minHeight: 56 })]}>
-                          <HostScreenRowView row={row} palette={chrome} openedAt={openedAt} actions={actions} />
+                          <HostScreenRowView row={row} palette={chrome} actions={actions} />
                         </HStack>
                       ))}
                     </VStack>

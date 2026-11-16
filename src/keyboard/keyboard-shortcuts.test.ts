@@ -1,5 +1,5 @@
 import { parseSettings } from '@/settings/settings';
-import { chordFor, chordLabel, rebind, type RecordedKey } from './keyboard-shortcuts';
+import { chordFor, chordLabel, LIST_KEYS, listKeyLabel, rebind, type RecordedKey } from './keyboard-shortcuts';
 
 const press = (key: string, held: Partial<Omit<RecordedKey, 'key'>> = {}): RecordedKey => ({
   key, command: true, shift: false, option: false, control: false, ...held,
@@ -10,6 +10,17 @@ describe('Keyboard Shortcuts', () => {
     expect(chordLabel(chordFor(undefined, 'open-settings'))).toBe('⌘,');
     expect(chordLabel(chordFor(undefined, 'split-down'))).toBe('⇧⌘D');
     expect(chordLabel(chordFor(undefined, 'pane-left'))).toBe('⇧⌘H');
+  });
+
+  it('has the keys of the Mac for Go to, New Topic, the tabs and one more Session', () => {
+    expect(chordLabel(chordFor(undefined, 'go-to'))).toBe('⌘P');
+    expect(chordLabel(chordFor(undefined, 'new-topic'))).toBe('⌘N');
+    expect(chordLabel(chordFor(undefined, 'switch-tab'))).toBe('⌥⌘T');
+    expect(chordLabel(chordFor(undefined, 'new-session-here'))).toBe('⌘↩');
+  });
+
+  it('writes the List Keys with no ⌘', () => {
+    expect(LIST_KEYS.map(listKeyLabel)).toEqual(['↑', '↓', '↩', '⎋', '⌥↩']);
   });
 
   it('gives an action a new key, and keeps it across a save', () => {

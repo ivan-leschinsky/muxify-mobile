@@ -74,6 +74,7 @@ function AppStack() {
         <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         <Stack.Screen name="keyboard-shortcuts" options={{ title: 'Keyboard Shortcuts' }} />
+        <Stack.Screen name="chooser-lists" options={{ title: 'Chooser' }} />
         <Stack.Screen
           name="host-form"
           options={{
@@ -105,6 +106,16 @@ function AppStack() {
             // view, where the new Topic will be.
             presentation: 'formSheet',
             sheetAllowedDetents: [0.5],
+            sheetGrabberVisible: true,
+            title: 'New Topic',
+          }}
+        />
+        <Stack.Screen
+          name="new-topic"
+          options={{
+            // Full height: the second step is a list above the keyboard.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [1],
             sheetGrabberVisible: true,
             title: 'New Topic',
           }}

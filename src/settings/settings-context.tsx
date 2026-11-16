@@ -12,8 +12,8 @@ import {
   type ThemeId,
 } from '@/constants/app-theme';
 import { deviceSettingsStore } from './device-settings';
-import { DEFAULT_SETTINGS, hostListsFor, resolveTheme, chooserListsFor, type ChooserLists, type HostScreenLists, type Settings } from './settings';
-import { deviceHostStore } from '@/storage/device-store';
+import type { HostScreenTab } from '@/domain/host-screen';
+import { DEFAULT_SETTINGS, resolveTheme, chooserListsFor, type ChooserLists, type Settings } from './settings';
 import { describeError } from '@/lib/describe-error';
 import { Alert, useColorScheme } from 'react-native';
 
@@ -22,7 +22,8 @@ interface SettingsContextValue {
   /** Changes one or more settings, and writes them. */
   update: (change: Partial<Settings>) => void;
   updateChooserLists: (hostId: string, lists: ChooserLists) => void;
-  updateHostLists: (hostId: string, lists: HostScreenLists) => void;
+  /** Remembers the Host Screen tab the user chose on this Host. */
+  rememberHostScreenTab: (hostId: string, tab: HostScreenTab) => void;
   /** The Theme in use, from the appearance setting and the phone's. See resolveTheme. */
   theme: ThemeId;
   /** Whether the app is drawn light or dark, which the Theme in use decides. */
@@ -56,24 +57,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const current = useRef(settings);
   const [ready, setReady] = useState(false);
-  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let present = true;
-    void (async () => {
-      const records = await deviceHostStore().load();
-      const saved = await deviceSettingsStore().load(records.hosts.map((host) => host.id));
+    void deviceSettingsStore().load().then((saved) => {
       if (!present) return;
       current.current = saved;
       setSettings(saved);
       setReady(true);
-    })().catch((error) => {
-      if (present) Alert.alert('Could not load settings', describeError(error), [
-        { text: 'Retry', onPress: () => setAttempt((value) => value + 1) },
-      ]);
     });
     return () => { present = false; };
-  }, [attempt]);
+  }, []);
 
   const change = useCallback((makeNext: (value: Settings) => Settings) => {
     const next = makeNext(current.current);
@@ -86,11 +80,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     change((value) => ({ ...value, ...patch }));
   }, [change]);
 
-  const updateHostLists = useCallback((hostId: string, lists: HostScreenLists) => {
-    change((value) => ({ ...value, hostListPreferences: {
-      version: 1,
-      byHost: { ...value.hostListPreferences?.byHost, [hostId]: lists },
-    } }));
+  const rememberHostScreenTab = useCallback((hostId: string, tab: HostScreenTab) => {
+    change((value) => ({ ...value, hostScreenTabs: { ...value.hostScreenTabs, [hostId]: tab } }));
   }, [change]);
 
   const updateChooserLists = useCallback((hostId: string, lists: ChooserLists) => {
@@ -104,7 +95,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     () => ({
       settings,
       update,
-      updateHostLists,
+      rememberHostScreenTab,
       updateChooserLists,
       theme,
       appearance: appearanceFor(theme),
@@ -113,7 +104,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       terminal: Themes[theme].palette,
       ansi: Themes[theme].ansi,
     }),
-    [settings, theme, update, updateHostLists, updateChooserLists],
+    [settings, theme, update, rememberHostScreenTab, updateChooserLists],
   );
 
   if (!ready) return null;
@@ -124,10 +115,6 @@ export function useSettings(): SettingsContextValue {
   const value = useContext(SettingsContext);
   if (!value) throw new Error('useSettings needs a SettingsProvider above it');
   return value;
-}
-
-export function useHostLists(hostId: string): HostScreenLists {
-  return hostListsFor(useSettings().settings, hostId);
 }
 
 export function useChooserLists(hostId: string): ChooserLists {

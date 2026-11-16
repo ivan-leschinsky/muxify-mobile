@@ -81,7 +81,6 @@ function memoryStore() {
       wrote.push(`${hostId}:${name}`);
       return Promise.resolve();
     },
-    forgetSession: () => Promise.resolve(),
     recentSessionsFor: () => Promise.resolve([]),
     rememberLastPlace: () => Promise.resolve(),
     forgetLastPlace: () => Promise.resolve(),

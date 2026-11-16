@@ -10,6 +10,13 @@ export type RequestId = string & { readonly __brand: 'RequestId' };
 export const REQUEST_CAPABILITY = 'request';
 
 /**
+ * The capability name of a Host CLI that lists Session Paths with no Topic
+ * (`session-paths`) and records a visit. With it, the phone shows Go to and
+ * the one-sheet New Topic.
+ */
+export const SESSION_PATHS_CAPABILITY = 'session-paths';
+
+/**
  * A new id, in the UUID layout that the Host CLI accepts. Hermes has no
  * `crypto.randomUUID`. The id is a name and not a secret, so `Math.random`
  * is enough.

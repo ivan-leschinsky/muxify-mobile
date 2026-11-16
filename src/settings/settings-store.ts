@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, migrateHostLists, parseSettings, type Settings } from './settings';
+import { DEFAULT_SETTINGS, parseSettings, type Settings } from './settings';
 
 export interface SettingsFile {
   read(): Promise<string | null>;
@@ -6,7 +6,7 @@ export interface SettingsFile {
 }
 
 export interface SettingsStore {
-  load(existingHostIds?: readonly string[]): Promise<Settings>;
+  load(): Promise<Settings>;
   save(settings: Settings): Promise<Settings>;
 }
 
@@ -29,16 +29,8 @@ export function createSettingsStore(file: SettingsFile): SettingsStore {
   }
 
   return {
-    load(existingHostIds) {
-      return ordered(async () => {
-        const settings = existingHostIds === undefined
-          ? await read().catch(() => DEFAULT_SETTINGS)
-          : await read();
-        if (existingHostIds === undefined) return settings;
-        const migrated = migrateHostLists(settings, existingHostIds);
-        if (migrated !== settings) await file.write(JSON.stringify(migrated));
-        return migrated;
-      });
+    load() {
+      return ordered(() => read().catch(() => DEFAULT_SETTINGS));
     },
     save(settings) {
       const clean = parseSettings(settings);

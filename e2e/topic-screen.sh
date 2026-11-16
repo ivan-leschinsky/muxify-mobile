@@ -3,8 +3,8 @@
 # Runs e2e/topic-screen.ad against two Topics in a sandboxed Muxify on this
 # Mac, the dev Host (see e2e/sandbox.sh): a live one, with a Note, a Tag and
 # one Session, and an Empty one. Both are pinned, so they are at the top of the
-# Topics list. The suite needs the Topics list on, so the app's settings get it
-# for the run.
+# Topics tab. The sandbox starts the Host Screen on Sessions, so the app's
+# settings get the Topics tab for the run.
 #
 #   bash e2e/topic-screen.sh
 
@@ -14,20 +14,12 @@ set -uo pipefail
 
 APP=dev.muxify.app
 DIR="$MUXIFY_E2E_ROOT/muxify-e2e-topic-screen"
-SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
 
 topic_new() {
   muxify topic new "$@" --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])'
 }
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-path = sys.argv[1]
-settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
-json.dump(settings, open(path, "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 
 mkdir -p "$DIR"
 live=$(topic_new "e2e Topic Screen live" --tag work) || exit 1

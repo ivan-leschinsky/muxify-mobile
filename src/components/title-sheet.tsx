@@ -105,7 +105,6 @@ export function TitleSheet({
   const [selected, setSelectedTab] = useState<ChooserList>(lists[0]);
   const selectedTab = isPresented && lists.includes(selected) ? selected : lists[0];
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
-  const [openedAt] = useState(() => new Date());
   useEffect(() => { setSelectedTab(lists[0]); }, [isPresented, lists]);
   const height = screen.height * 0.65;
 
@@ -159,7 +158,7 @@ export function TitleSheet({
                   {topics?.sections.map((section) => <VStack key={section.id} spacing={0} alignment="leading">
                     {section.title ? <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.secondary), padding({ vertical: 8 })]}>{section.title}</Text> : null}
                     {section.rows.map((row, index) => <HStack key={rowKey(row, index)} modifiers={[frame({ minHeight: 56 })]}>
-                      <HostScreenRowView row={row} palette={topics.palette} openedAt={openedAt} actions={{
+                      <HostScreenRowView row={row} palette={topics.palette} actions={{
                         onOpenTopic: topics.onOpenTopic,
                         onRetry: topics.onRetry,
                         onOpenSession: () => {},

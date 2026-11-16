@@ -109,7 +109,7 @@ export default function TopicAddSessionScreen() {
       const intent = intentFor(sent.current?.intent ?? null, wanted);
       if (sent.current?.intent !== intent) {
         const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-        const name = read.kind === 'listed' && read.capabilities.includes(REQUEST_CAPABILITY)
+        const name = read.kind === 'listed' && read.snapshot.capabilities.includes(REQUEST_CAPABILITY)
           ? freeSessionName(wanted, paths.kind === 'listed' ? paths.choices : [], read.snapshot, topicId as TopicId)
           : undefined;
         sent.current = { intent, name };

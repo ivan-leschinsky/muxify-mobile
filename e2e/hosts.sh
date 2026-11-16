@@ -13,7 +13,7 @@
 set -uo pipefail
 
 APP=dev.muxify.app
-RECORDS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-records.json"
+RECORDS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-records.json"
 
 fail() { echo "FAIL: $1"; exit 1; }
 
@@ -36,7 +36,7 @@ open_settings() {
   agent-device wait 1500 >/dev/null 2>&1
 }
 
-xcrun simctl terminate booted "$APP" >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
 python3 - "$RECORDS" <<'PY' || exit 1
 import json, sys
 path = sys.argv[1]

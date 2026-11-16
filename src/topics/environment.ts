@@ -76,7 +76,17 @@ export interface SnapshotSession {
   windows: SnapshotWindow[] | null;
 }
 
+/** Which views the Mac's Sidebar shows, from the Config keys `sidebar.topics` and `sidebar.sessions`. */
+export interface Sidebar {
+  topics: boolean;
+  sessions: boolean;
+}
+
 export interface EnvironmentSnapshot {
+  /** What this Host CLI can do past the first layout, such as take a Request id. A Host CLI from before the key has none. */
+  capabilities: readonly string[];
+  /** Null from a Host CLI that does not say, which shows both views. */
+  sidebar: Sidebar | null;
   /** In Config order. */
   tags: Tag[];
   sessions: SnapshotSession[];
@@ -100,6 +110,8 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
   const root = object(json, 'environment');
   const unpinned = object(root.unpinned, 'unpinned');
   return {
+    capabilities: parseCapabilities(root),
+    sidebar: parseSidebar(root.sidebar),
     tags: parseTags(root.tags),
     sessions: array(root.sessions, 'sessions').map((session, index) => {
       const at = `sessions[${index}]`;
@@ -134,6 +146,14 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
 export function parseCapabilities(json: unknown): string[] {
   const { capabilities } = object(json, 'environment');
   return Array.isArray(capabilities) ? capabilities.filter((name): name is string => typeof name === 'string') : [];
+}
+
+function parseSidebar(value: unknown): Sidebar | null {
+  if (value === undefined) return null;
+  const sidebar = object(value, 'sidebar');
+  if (typeof sidebar.topics !== 'boolean') throw new Error('sidebar.topics: expected a boolean');
+  if (typeof sidebar.sessions !== 'boolean') throw new Error('sidebar.sessions: expected a boolean');
+  return { topics: sidebar.topics, sessions: sidebar.sessions };
 }
 
 function parseUnpinned(unpinned: Record<string, unknown>): Unpinned {

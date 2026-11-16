@@ -1,7 +1,7 @@
 context platform=ios kind=simulator
 
-# With the Topics panel off, Options still offers New Session. Run
-# e2e/new-topic.sh, not this file: it turns the Topics list off for the run.
+# On a Host CLI that has no Go to, Options offers New Session. Run
+# e2e/new-topic.sh, not this file: it runs this in the sandbox.
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000

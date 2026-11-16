@@ -1,20 +1,33 @@
 import type { TopicId } from './environment';
 import { array, object, string } from './json-shape';
 
-export interface SessionPathChoice {
+/** What every Session Path row of the Host CLI says: a Session Path, or a Worktree of one. */
+interface SessionPathFields {
   kind: 'session_path' | 'worktree';
   name: string;
   label: string;
   directory: string;
   worktree: { path: string; branch: string | null } | null;
-  inThisTopic: boolean;
   alsoIn: { id: string; label: string }[];
+}
+
+/** A row of `topic session-paths`: a folder choice for one Topic. */
+export interface SessionPathChoice extends SessionPathFields {
+  inThisTopic: boolean;
+}
+
+/** A row of `session-paths`, which has no Topic. `lastVisit` is ISO 8601, or null for a folder never visited. */
+export interface SessionPathRow extends SessionPathFields {
+  lastVisit: string | null;
 }
 
 export type SessionPathsRead =
   | { kind: 'listed'; choices: SessionPathChoice[] }
   | { kind: 'old' }
   | { kind: 'failed'; error: string };
+
+/** What one `session-paths` came to. The rows keep the order the Host ranked them in. */
+export type RankedPathsRead = { kind: 'listed'; rows: SessionPathRow[] } | { kind: 'failed'; error: string };
 
 export interface SessionPathSection {
   id: 'in-topic' | 'paths' | 'worktrees';
@@ -29,26 +42,58 @@ export function parseSessionPaths(json: unknown, expectedTopic: TopicId): Sessio
   return array(answer.rows, 'rows').map((value, index) => {
     const at = `rows[${index}]`;
     const row = object(value, at);
-    if (row.kind !== 'session_path' && row.kind !== 'worktree') throw new Error(`${at}.kind: expected a Session Path or Worktree`);
     if (typeof row.in_this_topic !== 'boolean') throw new Error(`${at}.in_this_topic: expected a boolean`);
-    const worktree = row.worktree === null ? null : object(row.worktree, `${at}.worktree`);
-    return {
-      kind: row.kind,
-      name: string(row.name, `${at}.name`),
-      label: string(row.label, `${at}.label`),
-      directory: string(row.directory, `${at}.directory`),
-      worktree: worktree === null ? null : {
-        path: string(worktree.path, `${at}.worktree.path`),
-        branch: worktree.branch === null ? null : string(worktree.branch, `${at}.worktree.branch`),
-      },
-      inThisTopic: row.in_this_topic,
-      alsoIn: array(row.also_in, `${at}.also_in`).map((entry, i) => {
-        const where = `${at}.also_in[${i}]`;
-        const other = object(entry, where);
-        return { id: string(other.id, `${where}.id`), label: string(other.label, `${where}.label`) };
-      }),
-    };
+    return { ...parseFields(row, at), inThisTopic: row.in_this_topic };
   });
+}
+
+/** The rows of `session-paths --json`, in the order they came: the Host ranked them. */
+export function parseSessionPathRows(json: unknown): SessionPathRow[] {
+  return array(object(json, 'session paths').rows, 'rows').map((value, index) => {
+    const at = `rows[${index}]`;
+    const row = object(value, at);
+    return { ...parseFields(row, at), lastVisit: row.last_visit === null ? null : string(row.last_visit, `${at}.last_visit`) };
+  });
+}
+
+/** The rows as `session-paths --json` gives them, so that the phone's copy is read back by the same parse. */
+export function sessionPathRowsJson(rows: readonly SessionPathRow[]): unknown {
+  return {
+    rows: rows.map((row) => ({
+      kind: row.kind,
+      name: row.name,
+      label: row.label,
+      directory: row.directory,
+      worktree: row.worktree,
+      also_in: row.alsoIn,
+      last_visit: row.lastVisit,
+    })),
+  };
+}
+
+function parseFields(row: Record<string, unknown>, at: string): SessionPathFields {
+  if (row.kind !== 'session_path' && row.kind !== 'worktree') throw new Error(`${at}.kind: expected a Session Path or Worktree`);
+  const worktree = row.worktree === null ? null : object(row.worktree, `${at}.worktree`);
+  return {
+    kind: row.kind,
+    name: string(row.name, `${at}.name`),
+    label: string(row.label, `${at}.label`),
+    directory: string(row.directory, `${at}.directory`),
+    worktree: worktree === null ? null : {
+      path: string(worktree.path, `${at}.worktree.path`),
+      branch: worktree.branch === null ? null : string(worktree.branch, `${at}.worktree.branch`),
+    },
+    alsoIn: array(row.also_in, `${at}.also_in`).map((entry, i) => {
+      const where = `${at}.also_in[${i}]`;
+      const other = object(entry, where);
+      return { id: string(other.id, `${where}.id`), label: string(other.label, `${where}.label`) };
+    }),
+  };
+}
+
+/** The words of a row that a search matches: its names, its path, its branch and the Topics it is also in. */
+export function searchFields(row: SessionPathFields): string[] {
+  return [row.name, row.label, row.directory, row.worktree?.branch ?? '', ...row.alsoIn.map((topic) => topic.label)];
 }
 
 export function sessionPathSections(choices: SessionPathChoice[], query: string): SessionPathSection[] {
@@ -59,8 +104,7 @@ export function sessionPathSections(choices: SessionPathChoice[], query: string)
   ];
   const search = query.trim().toLocaleLowerCase();
   for (const choice of choices) {
-    const fields = [choice.name, choice.label, choice.directory, choice.worktree?.branch ?? '', ...choice.alsoIn.map((topic) => topic.label)];
-    if (!fields.some((field) => field.toLocaleLowerCase().includes(search))) continue;
+    if (!searchFields(choice).some((field) => field.toLocaleLowerCase().includes(search))) continue;
     const index = choice.inThisTopic ? 0 : choice.kind === 'session_path' ? 1 : 2;
     sections[index].choices.push(choice);
   }
