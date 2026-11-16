@@ -2914,15 +2914,17 @@ describe('the Topic Place', () => {
     expect(kit.places.at(-1)?.tab?.page).toBe('https://github.com/');
   });
 
-  it('goes back to the Place of a Topic opened from another one, and not of the Topic already held', async () => {
+  it('goes back to the Place of the Topic it holds, its Tab included, and of a Topic opened from another one', async () => {
     const kit = attachOn({ hosts: [twoWindows()], topicId: 'b', sessionName: 'play' });
     await connected(kit);
     await settle();
 
+    // Back from the Web View kept the Tab, and the Host Screen opens the same Topic.
     await kit.attach.switchSession({ sessionName: 'play', topic: { id: 'b' as TopicId, seed: null },
-      restore: place({ topicId: 'b', session: 'play' }) });
+      restore: place({ topicId: 'b', session: 'play', tab: TAB }) });
     await settle();
-    expect(where(kit)).toBe('@0 %0');
+    expect(where(kit)).toBe('@1 %3');
+    expect(kit.attach.takeTabToRestore()?.tab).toEqual(TAB);
 
     await kit.attach.switchSession({ sessionName: 'work', topic: { id: 'a' as TopicId, seed: null }, restore: place() });
     await settle();

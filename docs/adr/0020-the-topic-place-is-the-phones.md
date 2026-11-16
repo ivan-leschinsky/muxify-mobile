@@ -24,11 +24,12 @@ the Mac does not see it.
   Session, the active Window, the active Pane or the shown Tab changes. It does
   not write during a Session switch or a restore, because the Window that tmux
   shows then is one that the user only passes through.
-- The Web View tells the Attach which Tab it shows and gets a token. Back
-  returns the token and clears the Tab. A Topic change makes the token stale, so
-  the Web View that the change dismisses leaves the old Topic's Tab in its
-  Topic Place.
-- Opening a Topic (a Topic card, the Title Sheet's Topics, a cold start with a
+- The Web View tells the Attach which Tab it shows and gets a token. A Window
+  or Session pick returns the token and clears the Tab. Back, in a Topic, goes
+  to the Host Screen and keeps the token, so the Tab stays in the Topic Place.
+  A Topic change makes the token stale, so the Web View that the change
+  dismisses leaves the old Topic's Tab in its Topic Place.
+- Opening a Topic, also the Topic that the Attach still holds (a Topic card, the Title Sheet's Topics, a cold start with a
   Last Place Topic, a wake after Reopen) prefers the Topic Place's Session while
   the Topic lists it live. The Attach then selects the Window by tmux's id,
   else by index and name, because Reopen makes the Windows again with new ids.

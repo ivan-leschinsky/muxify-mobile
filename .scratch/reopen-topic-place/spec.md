@@ -151,3 +151,18 @@ like other one-shot requests in this codebase. Pick the existing idiom.
 ## Out of scope
 
 Option B/C/D, Tabs in `topic show --json`, a Place shared with the Mac.
+
+## Revision 2 (2026-11-16): Back keeps the page
+
+Gleb expected Back on a page to go to the Topics list, and the Topic to open on
+the page again. Changed:
+
+- In a Topic, Back and the swipe from the edge on the Web View go to the Host
+  Screen and keep the Tab in the Topic Place. Without a Topic, Back goes to the
+  Session as before, because nothing would keep the page.
+- A restore runs also for the Topic that the Attach still holds. Before, it ran
+  only for a different Topic, so the Host Screen's card of the same Topic
+  showed the terminal.
+- A pick of the current Topic in the Title Sheet only closes the sheet.
+- The way from a page to its terminal is the Title Sheet's Window pick, which
+  clears the Tab.

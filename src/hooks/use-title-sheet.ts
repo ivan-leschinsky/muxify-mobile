@@ -76,6 +76,11 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     closeChooser();
   }, [closeChooser]));
   const openTopic = useCallback((row: TopicRow) => {
+    // The Topic the user is in: nothing to open, and a restore would show its page again.
+    if (row.seed.id === state?.topic?.id) {
+      closeChooser();
+      return;
+    }
     if (row.seed.state === 'live') {
       const revision = chooserRevision.current;
       hostEntry.openTopic(row.seed, {
@@ -92,7 +97,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
         hostEntry.openTopic(row.seed);
       }
     }, SHEET_HANDOVER_MS);
-  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName]);
+  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName, state?.topic?.id]);
 
   /** The Session a switch is on its way to, whose row shows it is busy. */
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);

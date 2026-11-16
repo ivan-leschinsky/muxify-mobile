@@ -2,6 +2,7 @@ import { Stack, useIsFocused, useLocalSearchParams, useNavigation, useRouter } f
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { usePreventRemove } from 'expo-router/react-navigation';
 
 import type { BrowserTab } from '@/browser/tabs';
 import { HeaderTitleButton, type HeaderTitle } from '@/components/terminal-header';
@@ -34,9 +35,10 @@ interface ShownPage {
  * is empty here. The Terminal Screen is under this screen and its Attach
  * stays up, so Back finds the Session as it was. See ADR 0007.
  *
- * It has the Terminal Header's title and the same Title Sheet, so the Topics
- * list is a tap away from the page. While it is on top, the Attach keeps its
- * Tab in the Topic Place, and reopening the Topic opens it again. See ADR 0020.
+ * It has the Terminal Header's title and the same Title Sheet. While it is on
+ * top, the Attach keeps its Tab in the Topic Place. Back goes to the Host
+ * Screen and leaves the Tab there, so opening the Topic again opens the page
+ * again. A pick in the Title Sheet goes to the Terminal Screen. See ADR 0020.
  */
 export default function WebViewScreen() {
   const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string }>();
@@ -58,8 +60,9 @@ export default function WebViewScreen() {
   const [failure, setFailure] = useState<string | null>(null);
 
   // The Attach's token for this Tab. Going away gives it back, which clears
-  // the Tab from the Topic Place, unless the Topic changed first.
+  // the Tab from the Topic Place, unless the Topic changed first or Back kept it.
   const token = useRef<number | null>(null);
+  const keepTab = useRef(false);
   const where = useRef({ page: shown.page, scrollY: shown.scrollY });
   const scrolled = useRef(false);
   useEffect(() => {
@@ -69,7 +72,7 @@ export default function WebViewScreen() {
     where.current = { page: shown.page, scrollY: shown.scrollY };
     scrolled.current = shown.scrollY === 0;
     return () => {
-      attach.leaveTab(mine);
+      if (!keepTab.current) attach.leaveTab(mine);
       if (token.current === mine) token.current = null;
     };
   }, [attach, shown]);
@@ -82,19 +85,37 @@ export default function WebViewScreen() {
     if (token.current !== null) attach?.updateTab(token.current, where.current);
   }, [attach]);
 
+  // In a Topic, Back and the swipe from the edge leave the Topic as Back on
+  // the Terminal Screen does, and the Topic keeps this page. Without a Topic
+  // nothing keeps it, so Back goes to the Session under it, as the native
+  // stack does. The screen's own ways out (a pick in the Title Sheet) lift
+  // the block first, then go to the Terminal Screen.
+  const hostId = attach?.hostId;
+  const inTopic = state?.topic != null;
+  const [release, setRelease] = useState<(() => void) | null>(null);
   const leaving = useRef(false);
   const leave = useCallback(() => {
     if (leaving.current || !navigation.isFocused()) return;
     leaving.current = true;
-    router.back();
+    setRelease(() => () => router.back());
   }, [navigation, router]);
+  usePreventRemove(release === null && inTopic && hostId !== undefined, () => {
+    if (leaving.current || !hostId) return;
+    leaving.current = true;
+    if (settle.current) clearTimeout(settle.current);
+    report();
+    keepTab.current = true;
+    say('Back: to the Host Screen, and the Topic keeps its page');
+    setRelease(() => () => router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } }));
+  });
+  useEffect(() => release?.(), [release]);
 
   const showTab = useCallback((tab: BrowserTab) => {
     setFailure(null);
     setTitle(tab.title);
     setShown({ url: tab.url, page: tab.url, scrollY: 0, title: tab.title });
   }, []);
-  const chooser = useTitleSheet({ attach, state, hostId: attach?.hostId, onOpenTab: showTab, onMoved: leave });
+  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: leave });
 
   // A Topic opened from here, or a new Attach, is somewhere else: the Terminal
   // Screen shows it, and a restore pushes its own Web View.

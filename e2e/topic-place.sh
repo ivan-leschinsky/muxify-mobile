@@ -10,9 +10,13 @@
 #   2  the Web View's title opens the Title Sheet, and its Topics list opens
 #      another Topic on the Terminal Screen
 #   3  the first Topic opened again from the Host Screen has its Web View on
-#      top again, with the same page, although the Mac moved tmux's active
-#      Window meanwhile; Back from it finds the Window the phone was in
-#   4  a Tab that the Host lists no more leaves the reopened Topic on its Pane
+#      top again, with the same page, in the Window the phone was in,
+#      although the Mac moved tmux's active Window meanwhile
+#   4  Back from the Web View goes to the Host Screen, and the same Topic
+#      opened again has its page on top again
+#   5  a Window picked in the Web View's Title Sheet goes to the Terminal
+#      Screen, and the Topic opened again is on that Window, with no page
+#   6  a Tab that the Host lists no more leaves the reopened Topic on its Pane
 #
 # The sandbox's `muxify` is a stub for `browser` (see e2e/sandbox.sh): the Tabs
 # are a fixture, and no step talks to the Muxify app on this Mac. The page is
@@ -83,7 +87,7 @@ page_on_top() {
   agent-device is exists 'id="web-view-title"' >/dev/null 2>&1 || fail "the Web View has no Header title"
 }
 
-# Back from the Terminal Screen, or from the Web View and then the Terminal Screen.
+# Back from the Terminal Screen or the Web View: both go to the Host Screen.
 back_to_host() {
   for _ in 1 2; do
     agent-device is exists 'label="Host Options"' >/dev/null 2>&1 && return 0
@@ -93,7 +97,7 @@ back_to_host() {
   agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back did not reach the Host Screen"
 }
 
-echo "0/4  two Topics, the first with two Windows, and a page at this Mac's Tailscale address"
+echo "0/6  two Topics, the first with two Windows, and a page at this Mac's Tailscale address"
 ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
 [ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
 PORT=$(python3 -c 'import socket, sys; s = socket.socket(); s.bind((sys.argv[1], 0)); print(s.getsockname()[1])' "$ADDRESS")
@@ -129,7 +133,7 @@ agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&
 agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
 agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
 
-echo "1/4  a Tab of the Topic's Window opens in the Web View"
+echo "1/6  a Tab of the Topic's Window opens in the Web View"
 open_topic "$TOPIC"
 open_title_sheet header-title
 agent-device wait 'label="Tab Place page"' 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab"
@@ -138,7 +142,7 @@ page_on_top "the Web View did not show the page"
 agent-device is text 'id="topic-title"' "$TOPIC" >/dev/null 2>&1 || fail "the Web View's title is not the Topic's"
 echo "     the page, under the Topic's title"
 
-echo "2/4  the Web View's title reaches the Topics list"
+echo "2/6  the Web View's title reaches the Topics list"
 open_title_sheet web-view-title
 agent-device press 'label="Topics"' >/dev/null 2>&1
 agent-device wait "label=\"Topic $OTHER\"" 15000 >/dev/null 2>&1 || fail "the Web View's Title Sheet does not list the Topics"
@@ -149,29 +153,44 @@ agent-device is text 'id="topic-title"' "$OTHER" >/dev/null 2>&1 || fail "the To
 agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View is still on top after the Topic pick"
 echo "     $OTHER on the Terminal Screen"
 
-echo "3/4  $TOPIC opened again has its page on top, in the Window the phone was in"
+echo "3/6  $TOPIC opened again has its page on top, in the Window the phone was in"
 on_host "tmux select-window -t '$TOPIC_SESSION:1'"
 back_to_host
 open_topic "$TOPIC"
 page_on_top "the reopened Topic did not show its page"
-agent-device press 'id="BackButton"' >/dev/null 2>&1
-agent-device wait 'id="pane-command"' 8000 >/dev/null 2>&1 || fail "Back from the Web View did not find the Session"
 sleep 1
 WINDOW=$(on_host "tmux display-message -p -t '$TOPIC_SESSION' '#{window_index}'")
 [ "$WINDOW" = 0 ] || fail "the reopened Topic is in Window $WINDOW, not in Window 0 where the phone left it"
 echo "     the page, and Window 0 under it"
 
-echo "4/4  a Tab the Host lists no more leaves the Topic on its Pane"
+echo "4/6  Back from the page goes to the Host Screen, and $TOPIC opens on its page again"
+agent-device press 'id="BackButton"' >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back from the Web View did not go to the Host Screen"
+open_topic "$TOPIC"
+page_on_top "the Topic opened again after Back did not show its page"
+echo "     the Host Screen, then the page again"
+
+echo "5/6  a Window picked from the page goes to the terminal, and the Topic forgets the page"
+open_title_sheet web-view-title
+agent-device press 'label="Windows"' >/dev/null 2>&1
+agent-device wait 'label="second"' 15000 >/dev/null 2>&1 || fail "the Web View's Title Sheet does not list the Windows"
+sleep 1
+agent-device press 'label="second"' >/dev/null 2>&1
+agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 || fail "the Window pick did not go to the Terminal Screen"
+agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View is still on top after the Window pick"
+back_to_host
+open_topic "$TOPIC"
+sleep 3
+agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Topic opened its page again after a Window pick"
+WINDOW=$(on_host "tmux display-message -p -t '$TOPIC_SESSION' '#{window_index}'")
+[ "$WINDOW" = 1 ] || fail "the reopened Topic is in Window $WINDOW, not in Window 1 that was picked"
+echo "     the terminal in Window 1, and no page"
+
+echo "6/6  a Tab the Host lists no more leaves the Topic on its Pane"
 open_title_sheet header-title
 agent-device wait 'label="Tab Place page"' 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab again"
 agent-device press 'label="Tab Place page"' >/dev/null 2>&1
 page_on_top "the Web View did not show the page again"
-open_title_sheet web-view-title
-agent-device press 'label="Topics"' >/dev/null 2>&1
-agent-device wait "label=\"Topic $OTHER\"" 15000 >/dev/null 2>&1 || fail "the Topics list is gone"
-sleep 1
-agent-device press "label=\"Topic $OTHER\"" >/dev/null 2>&1
-agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 || fail "the second Topic pick did not go to the Terminal Screen"
 tabs ""
 CALLS=$(wc -l <"$ROOT/browser-calls")
 back_to_host
@@ -188,6 +207,7 @@ echo "     the Pane, and no Web View"
 
 agent-device close >/dev/null 2>&1
 echo
-echo "PASS: a Topic opened again is where it was left, its Web View included,"
-echo "      in the Window the phone was in; the Web View's title reaches the"
-echo "      Topics list; and a Tab the Host lists no more leaves the Pane on top."
+echo "PASS: a Topic opened again is where it was left, its page included, also"
+echo "      after Back from the page to the Host Screen; a Window picked from"
+echo "      the page goes to the terminal and forgets the page; and a Tab the"
+echo "      Host lists no more leaves the Pane on top."
