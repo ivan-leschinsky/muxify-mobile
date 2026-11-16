@@ -616,7 +616,9 @@ to the Terminal Screen; a Tab pick shows that Tab in the same Web View. Reload,
 and a pull down on the page, load the page again. A page that does not load
 shows the reason and **Try again**. In a Topic, Back goes to the Host Screen,
 as Back on the Terminal Screen does, and the Topic Place keeps the Tab, so
-opening the Topic again shows the page again. A Window pick in the Title Sheet
+opening the Topic again shows the page again: it slides in alone, and the
+Terminal Screen goes under it once it is in. The swipe from the edge is off on
+a page in a Topic, because it would show the terminal under the page. A Window pick in the Title Sheet
 is the way to the terminal, and it clears the Tab. Without a Topic, Back goes
 to the Session, which stayed attached.
 _Avoid_: browser (that is the Host's), in-app browser, preview

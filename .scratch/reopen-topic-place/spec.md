@@ -166,3 +166,21 @@ the page again. Changed:
 - A pick of the current Topic in the Title Sheet only closes the sheet.
 - The way from a page to its terminal is the Title Sheet's Window pick, which
   clears the Tab.
+
+## Revision 3 (2026-11-16): one move each way
+
+Gleb saw two moves when a Topic opened on its page: the terminal slid in,
+then the page. Changed:
+
+- The screen that opens a Topic gets the Topic Place's Tab from the opener
+  (`useHostEntry`'s `onAttached(tab)`) and pushes the Web View alone. When
+  its slide ends, the Web View puts the Terminal Screen under itself with a
+  reset that keeps the top, so nothing moves. Two pushes, or one reset that
+  adds both, slid in the terminal first.
+- The Web View, not the Terminal Screen, takes `tabToRestore` and checks that
+  the Host still lists the Tab. `showTab` no longer clears it.
+- A Topic picked in the Web View's Title Sheet whose Place has a Tab replaces
+  the page with that one.
+- The swipe from the edge is off on a page in a Topic.
+- A cold start still pushes the Terminal Screen, then the page once the
+  Attach is up.

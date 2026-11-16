@@ -47,9 +47,9 @@ import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
-import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import { fieldsParam } from '@/topics/topic-edit';
-import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
+import { placeTabRoute } from '@/browser/place-tab-route';
+import type { BrowserTab } from '@/browser/tabs';
 import {
   topicSeedParam,
 } from '@/topics/topic-detail';
@@ -60,7 +60,7 @@ import {
   type SessionVisit,
 } from '@/domain/reconnect';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host } from '@/storage/records';
+import type { Host, PlaceTab } from '@/storage/records';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
@@ -245,7 +245,8 @@ export default function TerminalScreen() {
         return;
       }
       setMissing(null);
-      // The Last Place's Topic opens at its Topic Place, a Browser Tab included.
+      // The Last Place's Topic opens at its Topic Place, a Browser Tab included:
+      // the Web View goes on top once the Attach is there to show it.
       const place = requested.topicId
         ? records.topicPlaces.find((each) => each.hostId === host.id && each.topicId === requested.topicId && each.session === requested.session)
         : undefined;
@@ -258,6 +259,7 @@ export default function TerminalScreen() {
       if (!requested.reconnect) {
         await holder.open(request);
         if (!left) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
+        if (!left && place?.tab) router.push(placeTabRoute(place.tab));
         return;
       }
       setReconnectHost(host.displayName);
@@ -278,6 +280,7 @@ export default function TerminalScreen() {
         },
       });
       if (!left && accepted) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
+      if (!left && accepted && place?.tab) router.push(placeTabRoute(place.tab));
     })().catch((error) => { if (!left) setMissing(describeError(error)); });
     return () => {
       left = true;
@@ -328,7 +331,11 @@ export default function TerminalScreen() {
   const showTab = useCallback((tab: BrowserTab) => {
     router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
   }, [router]);
-  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, beforeOpen: closePicker,
+  /** A Topic opened from the Title Sheet whose Topic Place has a Tab: its page, in one move. */
+  const moved = useCallback((tab: PlaceTab | null) => {
+    if (tab) router.push(placeTabRoute(tab));
+  }, [router]);
+  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
     onReplacingStopped: forgetLookup });
   const { closeChooser, openTitleSheet, openSessionsOnly, topic, rereadTopic } = chooser;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
@@ -528,34 +535,6 @@ export default function TerminalScreen() {
     return () => setScreenFocused(false);
   }, []));
 
-  /**
-   * The Browser Tab a reopened Topic had on top, shown again in the Web View
-   * when the Host still lists it. Taken from the Attach once, while this
-   * screen is on top; a Web View over it takes it when it goes.
-   */
-  const tabToRestore = state?.tabToRestore ?? null;
-  useEffect(() => {
-    if (!attach || !tabToRestore || !screenFocused || !hostId) return;
-    const wanted = attach.takeTabToRestore();
-    if (!wanted) return;
-    const { topic: wantedTopic, topology } = attach.state();
-    const window = topology.activeWindow?.id;
-    void (async () => {
-      const read = window ? await readBrowserTabs(hostId, window) : { kind: 'failed' as const, error: 'no active Window' };
-      const restore = tabRestoreOf(read, wanted.tab.url);
-      const now = attach.state();
-      if (holder.current() !== attach || now.topic?.id !== wantedTopic?.id || now.topology.activeWindow?.id !== window ||
-          !navigation.isFocused() || restore.kind === 'gone') {
-        say(restore.kind === 'gone'
-          ? `the Topic Place's Tab ${wanted.tab.url} is no longer listed; staying on the Pane`
-          : `the user moved before the Topic Place's Tab ${wanted.tab.url} was shown; leaving it`);
-        attach.leaveTab(wanted.token);
-        return;
-      }
-      if (restore.unread !== null) say(`the Tabs of ${window} did not read (${restore.unread}); opening ${wanted.tab.url} anyway`);
-      router.push({ pathname: '/web-view', params: { url: wanted.tab.url, page: wanted.tab.page, scrollY: String(wanted.tab.scrollY) } });
-    })();
-  }, [attach, tabToRestore, screenFocused, hostId, holder, navigation, router]);
   const sheetOpen = picker.open || chooser.sheet.isPresented;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
     paneId: slot.pane.id,
