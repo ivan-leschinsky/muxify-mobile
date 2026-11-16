@@ -281,17 +281,6 @@ describe('recent Sessions', () => {
     expect(await store.recentSessionsFor('host2')).toHaveLength(1);
   });
 
-  it('forgets one Session without touching the others', async () => {
-    const { file, secrets } = fakeStorage();
-    const store = createHostStore(file, secrets, ids(), clock());
-
-    await store.rememberSession('host1', 'dotfiles');
-    await store.rememberSession('host1', 'muxify');
-    await store.forgetSession('host1', 'dotfiles');
-
-    expect((await store.recentSessionsFor('host1')).map((s) => s.name)).toEqual(['muxify']);
-  });
-
   it('forgets a Host’s Sessions along with the Host', async () => {
     // Otherwise a Host deleted and re-added comes back haunted by the Sessions
     // of the one before it.

@@ -29,7 +29,6 @@ set -uo pipefail
 APP=dev.muxify.app
 TITLE="e2e Request Topic"
 CLI=${MUXIFY_REQUEST_CLI:?Set MUXIFY_REQUEST_CLI to a muxify that takes --request}
-SETTINGS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-settings.json"
 CALLS="$MUXIFY_E2E_ROOT/request-calls"
 
 "$CLI" environment show --json | python3 -c '
@@ -64,13 +63,7 @@ fi
 exit \$status
 EOF
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-settings = json.load(open(sys.argv[1]))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
-json.dump(settings, open(sys.argv[1], "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 
 # The sandbox's sshd takes the keys of your account, which the app has and
 # this script does not. So the jest check gets an sshd of its own, with the

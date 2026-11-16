@@ -11,6 +11,10 @@
 #
 #   PATH=~/.local/bin:$PATH bash e2e/topic-actions.sh
 #
+# The cards are taller than the screen, under the Topics and Sessions control,
+# so the suite reads the list from its top and from its bottom, and scrolls a
+# card into sight before it touches it.
+#
 # The sandbox has three places In Play. PinA and PinB are Pinned. P1 and B2 are
 # In Play with an Open Place between them, G1 is a Guest, and AG, P3 and B1 are
 # on the Bench. B1 is Unread. An Agent in AG is blocked, so AG has no swipe.
@@ -20,7 +24,6 @@
 set -uo pipefail
 
 APP=dev.muxify.app
-SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
 SNAPSHOT="$MUXIFY_E2E_ROOT/snapshot.json"
 
 # Writes the screen's tree to $SNAPSHOT. A snapshot taken while the screen moves can fail, so it tries again.
@@ -35,6 +38,40 @@ snap() {
 
 fail() { echo "FAIL: $*"; agent-device close >/dev/null 2>&1; exit 1; }
 
+# The Topic cards and Open Places on screen, top to bottom, one per line.
+cards_on_screen() {
+  snap || return 1
+  python3 - "$SNAPSHOT" <<'PY'
+import json, sys
+nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
+rows = sorted({(n["rect"]["y"], n["label"]) for n in nodes
+               if (n.get("label") or "").startswith("Topic ") and "Reorder" not in n.get("type", "")
+               or n.get("label") == "Open Place" and "cell" in (n.get("type", "") + n.get("role", "")).lower()})
+print("\n".join(label.removeprefix("Topic ") for _, label in rows))
+PY
+}
+
+# Scrolls the list to its end $1, top or bottom. agent-device's scroll top
+# can take the list for one already at its top, so a drag down brings it there.
+scroll_to() {
+  if [ "$1" = top ]; then
+    agent-device gesture pan 200 300 0 400 300 >/dev/null 2>&1
+    sleep 1
+  else
+    agent-device scroll bottom --settle >/dev/null 2>&1
+  fi
+}
+
+# Scrolls the node labelled $1 into sight: it is in the list's top or its bottom.
+reveal() {
+  local end
+  for end in "" top bottom; do
+    [ -n "$end" ] && scroll_to "$end"
+    snap && python3 -c 'import json, sys; sys.exit(not any(n.get("label") == sys.argv[2] for n in json.load(open(sys.argv[1]))["data"]["nodes"]))' "$SNAPSHOT" "$1" && return 0
+  done
+  return 1
+}
+
 case "$(tmux display-message -p '#{socket_path}')" in
   "$(cd "$MUXIFY_E2E_ROOT" && pwd -P)"/*) ;;
   *) echo "tmux is not the sandbox's server"; exit 1 ;;
@@ -43,14 +80,7 @@ esac
 muxify topic mark-read --help 2>&1 | grep -q -- --topic-only \
   || { echo "this muxify has no topic mark-read --topic-only: put a newer one first on the PATH"; exit 1; }
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-path = sys.argv[1]
-settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics"]
-json.dump(settings, open(path, "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 printf 'topics:\n  in_play: 3\n  tags:\n    personal: {}\n    work: {}\n' >"$MUXIFY_CONFIG"
 
 new_topic() {
@@ -98,14 +128,16 @@ expect() {
   [ "$have" = "$want" ] || fail "the Mac has '$have', not '$want'"
   mac_order=$(python3 -c 'import re, sys; print(" ".join("Open Place" if w == "open" else re.sub(r"\(.*\)", "", w) for w in sys.argv[1].split() if w != "|"))' "$want")
   for _ in $(seq 20); do
-    snap
-    screen=$(python3 - "$SNAPSHOT" <<'PY'
-import json, sys
-nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
-rows = sorted({(n["rect"]["y"], n["label"]) for n in nodes
-               if (n.get("label") or "").startswith("Topic ") and "Reorder" not in n.get("type", "")
-               or n.get("label") == "Open Place" and "cell" in (n.get("type", "") + n.get("role", "")).lower()})
-print(" ".join(label.removeprefix("Topic ") for _, label in rows))
+    scroll_to top
+    top=$(cards_on_screen)
+    scroll_to bottom
+    bottom=$(cards_on_screen)
+    # The bottom view goes on from the last card that the top view shows.
+    screen=$(python3 - "$top" "$bottom" <<'PY'
+import sys
+top, bottom = sys.argv[1].split("\n"), sys.argv[2].split("\n")
+top, bottom = [c for c in top if c], [c for c in bottom if c]
+print(" ".join(top + bottom[bottom.index(top[-1]) + 1:] if top and top[-1] in bottom else top + bottom))
 PY
 )
     [ "$screen" = "$mac_order" ] && { echo "ok: $want"; return 0; }
@@ -131,12 +163,14 @@ open_host_screen() {
   agent-device press 'label="Host Dev Host"' --settle >/dev/null
   agent-device wait "label=\"Topic ${1:-P1}\"" 15000 >/dev/null || fail "no Topics on the Host Screen"
   agent-device press 'label="Bench"' --settle >/dev/null
-  agent-device wait "label=\"Topic ${2:-B1}\"" 8000 >/dev/null || fail "the Bench did not open"
+  sleep 1
+  reveal "Topic ${2:-B1}" || fail "the Bench did not open"
 }
 
 # Long-presses card $1, checks that its menu is exactly $2 (labels joined by |), and presses $3.
 menu() {
   local items
+  reveal "Topic $1" || fail "no card $1"
   agent-device longpress "label=\"Topic $1\"" 1000 --settle >/dev/null
   agent-device wait "role=button label=\"$3\"" 5000 >/dev/null || fail "no $3 in the menu of $1"
   snap
@@ -153,6 +187,7 @@ PY
 
 # Swipes card $1 left by $2 points, in $3 ms, from near the right edge of its row.
 swipe() {
+  reveal "Topic $1" || fail "no card $1"
   agent-device gesture pan 370 "$(middle_y "Topic $1")" "-$2" 0 "${3:-400}" >/dev/null || fail "no swipe on $1"
 }
 
@@ -207,9 +242,11 @@ echo "ok: a long-press after a swipe opens the menu"
 echo "== Move"
 # Picks card $1 with Move… in its menu, then taps the target labelled $2.
 move() {
+  reveal "Topic $1" || fail "no card $1"
   agent-device longpress "label=\"Topic $1\"" 1000 --settle >/dev/null
   agent-device press 'role=button label="Move…"' --settle >/dev/null || fail "no Move… in the menu of $1"
   agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of $1 did not start"
+  reveal "$2" || fail "no target $2 for $1"
   agent-device press "label=\"$2\"" --settle >/dev/null || fail "no target $2 for $1"
 }
 move AG "Move above B1"
@@ -226,6 +263,7 @@ move P3 "Make a Guest"
 expect "PinA PinB | G1 B2 B1 | P1 P3 | AG(blocked)"
 move B2 "Bench"
 expect "PinA PinB | G1 open B1 | P1 P3 | B2 AG(blocked)"
+reveal "Topic AG" || fail "no card AG"
 agent-device longpress 'label="Topic AG"' 1000 --settle >/dev/null
 agent-device press 'role=button label="Move…"' --settle >/dev/null || fail "no Move… in the menu of AG"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel during a move"
@@ -236,6 +274,7 @@ echo "ok: Cancel ends a move with no change"
 echo "== Fill an Open Place"
 # Taps the Open Place, then the card $1 in the sheet that opens.
 fill() {
+  reveal "Open Place" || fail "no Open Place to tap"
   agent-device press 'label="Open Place"' --settle >/dev/null || fail "no Open Place to tap"
   agent-device wait 'label="Close Fill Open Place"' 5000 >/dev/null || fail "the Fill sheet did not open"
   agent-device press "label=\"Topic $1\"" --settle >/dev/null || fail "no $1 in the Fill sheet"
@@ -249,6 +288,7 @@ fill P3
 expect "PinA PinB | G1 B2 P3 | P1 | B1 AG(blocked)"
 menu P3 "Mark as Unread|Move Up|Move Down|Bench" "Bench"
 expect "PinA PinB | G1 B2 open | P1 | P3 B1 AG(blocked)"
+reveal "Open Place" || fail "no Open Place to tap"
 agent-device press 'label="Open Place"' --settle >/dev/null || fail "no Open Place to tap"
 agent-device press 'label="Close Fill Open Place"' --settle >/dev/null || fail "no Close on the Fill sheet"
 agent-device wait absent 'label="Close Fill Open Place"' 5000 >/dev/null || fail "Close did not close the Fill sheet"
@@ -267,6 +307,7 @@ echo "ok: a Dormant Topic fills an Open Place"
 echo "== Settle"
 # Long-presses card $1, picks Settle…, then presses $2 in the alert.
 settle() {
+  reveal "Topic $1" || fail "no card $1"
   agent-device longpress "label=\"Topic $1\"" 1000 --settle >/dev/null
   agent-device press 'role=button label="Settle…"' --settle >/dev/null || fail "no Settle… in the menu of $1"
   agent-device press "role=button label=\"$2\"" --settle >/dev/null || fail "no $2 in the Settle alert of $1"

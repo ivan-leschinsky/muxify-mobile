@@ -1,15 +1,16 @@
 import { answered, asking, refused, UNASKED, type Listing } from './host-listing';
 import {
   firstReadAnswered,
-  homeRows,
   hostScreen,
+  hostScreenTabs,
+  runningSessions,
+  tabOnShow,
   topicSections,
+  type AttachPlace,
   type HostScreenRow,
   type HostScreenSection,
   type OpenableRow,
 } from './host-screen';
-import type { HostScreenLists } from '@/settings/settings';
-import type { RecentSession } from '@/storage/records';
 import type { Session } from '@/tmux/tmux-client';
 import type {
   Card,
@@ -32,17 +33,10 @@ import {
   type HostTopics,
 } from '@/topics/host-topics';
 
-const remembered = (name: string, lastOpenedAt = '2026-09-15T10:00:00Z'): RecentSession => ({
-  hostId: 'host1',
-  name,
-  lastOpenedAt,
-});
-
 const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
-const recentRow = (name: string, windowCount?: number, lastOpenedAt = '2026-09-15T10:00:00Z') =>
-  ({ kind: 'recent', name, lastOpenedAt, windowCount }) as const;
-const availableRow = (name: string) => ({ kind: 'available', name }) as const;
+const sessionRow = (name: string, topicLabel: string | null = null, windowCount?: number): HostScreenRow =>
+  ({ kind: 'session', name, windowCount, topicLabel });
 const note = (text: string) => ({ kind: 'note', text }) as const;
 
 const INSTALL_RUNNING: HostCliState = { kind: 'running' };
@@ -51,241 +45,16 @@ const installDone = (kind: HostCliOutcome, text: string): HostCliState => ({
   result: { kind, text, line: kind === 'failed' || kind === 'skipped' ? `${kind}: ${text}` : `${kind} ${text}` },
 });
 
-const CHECKING = { kind: 'checking', text: 'Checking Sessions…' } as const;
-const NOTHING_OPENED = note('Nothing opened on this Host yet.');
-const NO_OTHERS = note('No other Sessions on this Host.');
-
-const recentSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'recent',
-  title: 'Recent Sessions',
-  footer: null,
-  rows,
-});
-
-/** The Sessions list below a Recent Sessions list that is on. */
-const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'sessions',
-  title: 'Sessions',
-  footer: rows.some((row) => row.kind === 'available')
-    ? 'Opening one adds it to Recent Sessions.'
-    : null,
-  rows,
-});
-
-/** The Sessions list with Recent Sessions off. */
-const allSessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'sessions',
-  title: 'Sessions',
-  footer: null,
-  rows,
-});
-
-const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'topics',
-  title: 'Topics',
-  footer: null,
-  rows,
-});
+const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Topics', rows });
+const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'sessions', title: null, rows });
 
 // What the Topics list shows before the Host has answered about Topics.
 const TOPICS = topicsSection({ kind: 'checking', text: 'Checking Topics…' });
 
-interface Case {
-  name: string;
-  lists?: HostScreenLists;
-  recent: RecentSession[];
-  listing: Listing;
-  sections: HostScreenSection[];
-}
-
-describe('hostScreen', () => {
-  it.each<Case>([
-    {
-      // One Session, one row: two ways to open the same thing is a list that
-      // lies about how many Sessions the Host has.
-      name: 'keeps a Session out of Sessions once it is in Recent Sessions',
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify'), running('cook')]),
-      sections: [recentSection(recentRow('muxify', 1)), sessionsSection(availableRow('cook'))],
-    },
-    {
-      // The Mac's Sessions mode shows the Host's order, so the phone matches
-      // it rather than sorting.
-      name: 'keeps the order it was given for Recent Sessions, and the Host order for Sessions',
-      recent: [
-        remembered('zebra', '2026-09-15T11:00:00Z'),
-        remembered('alpha', '2026-09-15T09:00:00Z'),
-      ],
-      listing: answered([
-        running('zebra'),
-        running('alpha'),
-        running('game_server'),
-        running('aws_terraform'),
-      ]),
-      sections: [
-        recentSection(
-          recentRow('zebra', 1, '2026-09-15T11:00:00Z'),
-          recentRow('alpha', 1, '2026-09-15T09:00:00Z'),
-        ),
-        sessionsSection(availableRow('game_server'), availableRow('aws_terraform')),
-      ],
-    },
-    {
-      name: 'carries what the Host said onto the remembered row',
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify', 4)]),
-      sections: [recentSection(recentRow('muxify', 4)), sessionsSection(NO_OTHERS)],
-    },
-    {
-      name: 'hides a remembered Session the Host no longer has',
-      recent: [remembered('gone'), remembered('here')],
-      listing: answered([running('here')]),
-      sections: [recentSection(recentRow('here', 1)), sessionsSection(NO_OTHERS)],
-    },
-    {
-      // Failing open is the whole point: an unreachable Host is exactly when
-      // you most want to see what you had open on it.
-      name: 'shows everything remembered while the first question is in flight',
-      recent: [remembered('muxify'), remembered('cook')],
-      listing: UNASKED,
-      sections: [recentSection(recentRow('muxify'), recentRow('cook')), sessionsSection(CHECKING)],
-    },
-    {
-      name: 'shows everything remembered when the Host refused, with why',
-      recent: [remembered('muxify')],
-      listing: refused('Host unreachable'),
-      sections: [
-        recentSection(recentRow('muxify')),
-        sessionsSection({ kind: 'refused', message: 'Host unreachable' }),
-      ],
-    },
-    {
-      name: 'keeps the last answer on screen while it asks again',
-      recent: [remembered('muxify')],
-      listing: asking(answered([running('muxify', 2), running('cook')])),
-      sections: [recentSection(recentRow('muxify', 2)), sessionsSection(availableRow('cook'))],
-    },
-    {
-      name: 'reads a Host with nothing running as no Sessions at all',
-      recent: [remembered('gone')],
-      listing: answered([]),
-      sections: [recentSection(NOTHING_OPENED), sessionsSection(NO_OTHERS)],
-    },
-    {
-      name: 'lists a Host that has Sessions nobody here has opened',
-      recent: [],
-      listing: answered([running('cook'), running('aws_terraform')]),
-      sections: [
-        recentSection(NOTHING_OPENED),
-        sessionsSection(availableRow('cook'), availableRow('aws_terraform')),
-      ],
-    },
-    {
-      name: 'shows only the Topics list when Topics is the one list on',
-      lists: ['topics'],
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify'), running('cook')]),
-      sections: [TOPICS],
-    },
-    {
-      name: 'shows Recent Sessions and Topics without Sessions',
-      lists: ['recent', 'topics'],
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify'), running('cook')]),
-      sections: [recentSection(recentRow('muxify', 1)), TOPICS],
-    },
-    {
-      name: 'puts the three lists in the order set, Topics first',
-      lists: ['topics', 'recent', 'sessions'],
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify'), running('cook')]),
-      sections: [
-        TOPICS,
-        recentSection(recentRow('muxify', 1)),
-        sessionsSection(availableRow('cook')),
-      ],
-    },
-    {
-      name: 'puts the three lists in the order set, Recent Sessions last',
-      lists: ['sessions', 'topics', 'recent'],
-      recent: [remembered('muxify')],
-      listing: answered([running('muxify'), running('cook')]),
-      sections: [
-        sessionsSection(availableRow('cook')),
-        TOPICS,
-        recentSection(recentRow('muxify', 1)),
-      ],
-    },
-    {
-      name: 'with Recent Sessions off, keeps a remembered Session in the Host order',
-      lists: ['sessions'],
-      recent: [remembered('muxify', '2026-09-15T11:00:00Z'), remembered('gone')],
-      listing: answered([running('zebra'), running('muxify', 3), running('alpha')]),
-      sections: [
-        allSessionsSection(
-          availableRow('zebra'),
-          recentRow('muxify', 3, '2026-09-15T11:00:00Z'),
-          availableRow('alpha'),
-        ),
-      ],
-    },
-    {
-      name: 'with Recent Sessions off, keeps the last answer while it asks again',
-      lists: ['sessions'],
-      recent: [remembered('muxify')],
-      listing: asking(answered([running('cook'), running('muxify', 2)])),
-      sections: [allSessionsSection(availableRow('cook'), recentRow('muxify', 2))],
-    },
-    {
-      name: 'with Recent Sessions off, shows everything remembered before an answer',
-      lists: ['sessions'],
-      recent: [remembered('muxify'), remembered('cook')],
-      listing: UNASKED,
-      sections: [allSessionsSection(recentRow('muxify'), recentRow('cook'), CHECKING)],
-    },
-    {
-      name: 'with Recent Sessions off, shows why the Host refused',
-      lists: ['sessions'],
-      recent: [remembered('muxify')],
-      listing: refused('Host unreachable'),
-      sections: [
-        allSessionsSection(recentRow('muxify'), { kind: 'refused', message: 'Host unreachable' }),
-      ],
-    },
-    {
-      name: 'with Recent Sessions off, reads a Host with nothing running as no Sessions',
-      lists: ['sessions'],
-      recent: [remembered('gone')],
-      listing: answered([]),
-      sections: [allSessionsSection(note('No Sessions on this Host.'))],
-    },
-    {
-      name: 'with Recent Sessions off, keeps Topics in its place',
-      lists: ['topics', 'sessions'],
-      recent: [],
-      listing: answered([running('cook')]),
-      sections: [TOPICS, allSessionsSection(availableRow('cook'))],
-    },
-  ])('$name', ({ lists = ['recent', 'sessions'], recent, listing, sections }) => {
-    expect(
-      hostScreen({
-        settings: { hostScreenLists: lists },
-        recent,
-        listing,
-        topics: TOPICS_UNASKED,
-        opened: new Set(),
-        appearance: 'light',
-      }),
-    ).toEqual(sections);
-  });
-});
-
 interface TopicsCase {
   name: string;
-  lists?: HostScreenLists;
-  recent?: RecentSession[];
-  listing?: Listing;
   topics: HostTopics;
+  attach?: AttachPlace | null;
   opened?: ReadonlySet<OpenableRow>;
   appearance?: 'light' | 'dark';
   sections: HostScreenSection[];
@@ -345,6 +114,8 @@ const snapshotSession = (id: string, name: string, topic: string | null) => ({
 
 function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot {
   return {
+    capabilities: [],
+    sidebar: null,
     tags: [],
     sessions: [],
     pinned: [],
@@ -365,7 +136,7 @@ const section = (
   id: HostScreenSection['id'],
   title: string | null,
   ...rows: HostScreenRow[]
-): HostScreenSection => ({ id, title, footer: null, rows });
+): HostScreenSection => ({ id, title, rows });
 
 const inPlaySection = (...rows: HostScreenRow[]): HostScreenSection => section('in-play', 'In Play', ...rows);
 
@@ -391,7 +162,7 @@ const TAGS: EnvironmentSnapshot['tags'] = [
 // The Topic's own order, which the Mac does not draw in.
 const TAG_NAMES = ['gone', 'ui', 'odd', 'work'];
 
-describe('hostScreen with Topics', () => {
+describe('the Topics tab of the Host Screen', () => {
   it.each<TopicsCase>([
     {
       name: 'puts the Pinned cards in their own section, and the places in the order they came',
@@ -436,7 +207,7 @@ describe('hostScreen with Topics', () => {
       sections: [section('in-play', 'In Play', OPEN_PLACE_ROW, OPEN_PLACE_ROW)],
     },
     {
-      name: 'with In Play and Topics alone, gives No Topic its own section after the Bench',
+      name: 'gives No Topic its own section after the Bench',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', null)],
         unpinned: inPlay({ bench: [topicCard('b1')] }),
@@ -573,7 +344,7 @@ describe('hostScreen with Topics', () => {
       ],
     },
     {
-      name: 'ends the list with one closed No Topic row when Topics stand alone',
+      name: 'ends the list with one closed No Topic row',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', null), snapshotSession('$2', 'work', 't1')],
         unpinned: inPlay({ places: [topicCard('t1')] }),
@@ -598,8 +369,8 @@ describe('hostScreen with Topics', () => {
           'no-topic',
           null,
           { kind: 'no-topic', count: 2, opened: true },
-          { kind: 'available', name: 'zeta' },
-          { kind: 'available', name: 'alpha' },
+          sessionRow('zeta'),
+          sessionRow('alpha'),
         ),
       ],
     },
@@ -630,105 +401,13 @@ describe('hostScreen with Topics', () => {
       sections: [
         section('in-play', 'In Play', OPEN_PLACE_ROW),
         section('bench', null, { kind: 'bench', opened: false }),
-        section('no-topic', null, { kind: 'no-topic', count: 1, opened: true }, availableRow('cook')),
+        section('no-topic', null, { kind: 'no-topic', count: 1, opened: true }, sessionRow('cook')),
       ],
     },
     {
       name: 'says so when the Host has no Topics at all',
       topics: listed({}),
       sections: [inPlaySection(note('No Topics yet.'))],
-    },
-    {
-      // D2: one Session, one row. The Topic's Sessions are under the Topic.
-      name: 'with every list, leaves a Session that is in a Topic out of the others',
-      lists: ['topics', 'recent', 'sessions'],
-      recent: [remembered('work'), remembered('cook')],
-      listing: answered([running('work'), running('cook'), running('play')]),
-      topics: listed({
-        sessions: [
-          snapshotSession('$1', 'work', 't1'),
-          snapshotSession('$2', 'cook', null),
-          snapshotSession('$3', 'play', null),
-        ],
-        unpinned: inPlay({ places: [topicCard('t1')] }),
-        no_topic: [sid('$2'), sid('$3')],
-      }),
-      sections: [
-        inPlaySection(topicRow('t1')),
-        recentSection(recentRow('cook', 1)),
-        sessionsSection(availableRow('play')),
-      ],
-    },
-    {
-      name: 'with Recent Sessions and Topics, leaves Recent Sessions out of the No Topic row',
-      lists: ['recent', 'topics'],
-      recent: [remembered('work'), remembered('cook')],
-      listing: answered([running('work'), running('cook'), running('play')]),
-      topics: listed({
-        sessions: [
-          snapshotSession('$1', 'work', 't1'),
-          snapshotSession('$2', 'cook', null),
-          snapshotSession('$3', 'play', null),
-        ],
-        unpinned: inPlay({ places: [topicCard('t1')] }),
-        no_topic: [sid('$2'), sid('$3')],
-      }),
-      opened: new Set<OpenableRow>(['no-topic']),
-      sections: [
-        recentSection(recentRow('cook', 1)),
-        inPlaySection(topicRow('t1')),
-        section(
-          'no-topic',
-          null,
-          { kind: 'no-topic', count: 1, opened: true },
-          { kind: 'available', name: 'play' },
-        ),
-      ],
-    },
-    {
-      name: 'has no No Topic row when Recent Sessions has every Session in no Topic',
-      lists: ['topics', 'recent'],
-      recent: [remembered('cook')],
-      listing: answered([running('cook')]),
-      topics: listed({
-        sessions: [snapshotSession('$2', 'cook', null)],
-        unpinned: inPlay({ places: [topicCard('t1')] }),
-        no_topic: [sid('$2')],
-      }),
-      sections: [inPlaySection(topicRow('t1')), recentSection(recentRow('cook', 1))],
-    },
-    {
-      name: 'with Sessions and Topics, leaves a Session in a Topic out of Sessions',
-      lists: ['sessions', 'topics'],
-      recent: [remembered('work')],
-      listing: answered([running('work'), running('cook')]),
-      topics: listed({
-        sessions: [snapshotSession('$1', 'work', 't1'), snapshotSession('$2', 'cook', null)],
-        unpinned: inPlay({ places: [topicCard('t1')] }),
-      }),
-      sections: [allSessionsSection(availableRow('cook')), inPlaySection(topicRow('t1'))],
-    },
-    {
-      name: 'with Topics off, a Session in a Topic stays in Sessions',
-      lists: ['recent', 'sessions'],
-      recent: [],
-      listing: answered([running('work')]),
-      topics: listed({
-        sessions: [snapshotSession('$1', 'work', 't1')],
-        unpinned: inPlay({ places: [topicCard('t1')] }),
-      }),
-      sections: [recentSection(NOTHING_OPENED), sessionsSection(availableRow('work'))],
-    },
-    {
-      name: 'with every list and no snapshot yet, leaves no Session out',
-      lists: ['topics', 'recent', 'sessions'],
-      listing: answered([running('work')]),
-      topics: { kind: 'absent' },
-      sections: [
-        topicsSection(note('No Topics on this Host')),
-        recentSection(NOTHING_OPENED),
-        sessionsSection(availableRow('work')),
-      ],
     },
     {
       name: 'shows a check while the first read of Topics is in flight',
@@ -796,7 +475,6 @@ describe('hostScreen with Topics', () => {
         settled({ kind: 'loading', last: null }, {
           kind: 'listed',
           snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
-          capabilities: [],
         }),
         installDone('installed', 'abc1234 1760000000'),
       ),
@@ -830,36 +508,19 @@ describe('hostScreen with Topics', () => {
         inPlaySection({ kind: 'refused', message: 'muxify exited with status 1' }, topicRow('t1')),
       ],
     },
-  ])('$name', ({
-    lists = ['topics'],
-    recent = [],
-    listing = UNASKED,
-    topics,
-    opened = CLOSED,
-    appearance = 'light',
-    sections,
-  }) => {
-    expect(
-      hostScreen({
-        settings: { hostScreenLists: lists },
-        recent,
-        listing,
-        topics,
-        opened,
-        appearance,
-      }),
-    ).toEqual(sections);
+  ])('$name', ({ topics, attach = null, opened = CLOSED, appearance = 'light', sections }) => {
+    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach, opened, appearance })).toEqual(sections);
   });
 });
 
-describe('hostScreen with Topics, against the snapshot `environment show` gave on the Mac', () => {
+describe('the Host Screen, against the snapshot `environment show` gave on the Mac', () => {
   const mac = parseEnvironment(inPlayFixture);
 
   it('draws the sections and cards in the order the Mac sent them', () => {
     const sections = hostScreen({
-      settings: { hostScreenLists: ['topics'] },
-      recent: [],
+      tab: 'topics',
       listing: UNASKED,
+      attach: null,
       topics: { kind: 'listed', snapshot: mac },
       opened: new Set<OpenableRow>(['bench']),
       appearance: 'dark',
@@ -877,22 +538,17 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
     expect(sections[1]?.rows[2]).toMatchObject({ tags: [{ name: 'personal', color: '#7fa88a' }] });
   });
 
-  it('with Recent Sessions off, lists the Sessions in the order `environment show` gave', () => {
+  it('lists every Session on the Sessions tab, in the order `environment show` gave', () => {
     const [sessions] = hostScreen({
-      settings: { hostScreenLists: ['sessions', 'topics'] },
-      recent: [remembered('chezmoi')],
+      tab: 'sessions',
       listing: answered(listedSessions(mac)),
       topics: { kind: 'listed', snapshot: mac },
+      attach: null,
       opened: CLOSED,
       appearance: 'light',
     });
-    const inNoTopic = mac.sessions.filter((session) => session.topic === null);
 
-    expect(sessions?.id).toBe('sessions');
-    expect(sessions?.rows.map((row) => ('name' in row ? row.name : row.kind))).toEqual(
-      inNoTopic.map((session) => session.name),
-    );
-    expect(sessions?.rows.find((row) => row.kind === 'recent')).toMatchObject({ name: 'chezmoi' });
+    expect(sessions?.rows.map((row) => ('name' in row ? row.name : row.kind))).toEqual(mac.sessions.map((session) => session.name));
   });
 });
 
@@ -919,36 +575,180 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
   });
 });
 
-describe('homeRows of a Host that is not in In Play', () => {
-  const input = {
-    settings: { hostScreenLists: ['recent', 'sessions'] as HostScreenLists },
-    recent: [remembered('a'), remembered('b')],
-    listing: answered([running('a'), running('b'), running('c'), running('d')]),
-    topics: TOPICS_UNASKED,
-    opened: CLOSED,
-    appearance: 'dark' as const,
-  };
-  const rowName = (row: HostScreenRow) => ('name' in row ? row.name : row.kind);
+describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
+  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) });
 
-  it('keeps the first rows across the sections', () => {
-    expect(homeRows(input, 3).map(rowName)).toEqual(['a', 'b', 'c']);
-    expect(homeRows(input, 9).map(rowName)).toEqual(['a', 'b', 'c', 'd']);
+  it.each<{ name: string; listing: Listing; topics: HostTopics; answered: boolean }>([
+    { name: 'waits while the first read is in flight', listing: UNASKED, topics: TOPICS_UNASKED, answered: false },
+    { name: 'waits for the Topics, which say the tabs', listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: false },
+    { name: 'draws once both have answered', listing: answered([running('main')]), topics: listed, answered: true },
+    { name: 'draws a Host with no Host CLI', listing: answered([running('main')]), topics: { kind: 'absent' }, answered: true },
+    { name: 'does not wait again on a later read', listing: asking(answered([running('main')])), topics: loadingTopics(listed), answered: true },
+    { name: 'takes a refusal as the answer', listing: refused('This Host is no longer saved.'), topics: TOPICS_UNASKED, answered: true },
+  ])('$name', ({ listing, topics, answered: expected }) => {
+    expect(firstReadAnswered({ listing, topics })).toBe(expected);
   });
 });
 
-describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
-  const sessionsOnly = { hostScreenLists: ['recent', 'sessions'] as HostScreenLists };
-  const withTopics = { hostScreenLists: ['topics', 'recent', 'sessions'] as HostScreenLists };
-  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture), capabilities: [] });
+describe('the tabs of the Host Screen', () => {
+  const withSidebar = (sidebar: EnvironmentSnapshot['sidebar']) => listed({ sidebar });
 
-  it.each<{ name: string; settings: { hostScreenLists: HostScreenLists }; listing: Listing; topics: HostTopics; answered: boolean }>([
-    { name: 'waits while the first read is in flight', settings: sessionsOnly, listing: UNASKED, topics: TOPICS_UNASKED, answered: false },
-    { name: 'waits for the Topics when the Topics list is on', settings: withTopics, listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: false },
-    { name: 'does not wait for Topics it does not show', settings: sessionsOnly, listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: true },
-    { name: 'draws once both have answered', settings: withTopics, listing: answered([running('main')]), topics: listed, answered: true },
-    { name: 'does not wait again on a later read', settings: withTopics, listing: asking(answered([running('main')])), topics: loadingTopics(listed), answered: true },
-    { name: 'takes a refusal as the answer', settings: withTopics, listing: refused('This Host is no longer saved.'), topics: TOPICS_UNASKED, answered: true },
-  ])('$name', ({ settings, listing, topics, answered: expected }) => {
-    expect(firstReadAnswered({ settings, listing, topics })).toBe(expected);
+  it.each<{ name: string; topics: HostTopics; tabs: string[] }>([
+    { name: 'shows both for a Host CLI that does not say', topics: withSidebar(null), tabs: ['topics', 'sessions'] },
+    { name: 'shows both when the Config has both on', topics: withSidebar({ topics: true, sessions: true }), tabs: ['topics', 'sessions'] },
+    { name: 'shows only Topics when the Config has Sessions off', topics: withSidebar({ topics: true, sessions: false }), tabs: ['topics'] },
+    { name: 'shows only Sessions when the Config has Topics off', topics: withSidebar({ topics: false, sessions: true }), tabs: ['sessions'] },
+    { name: 'shows both when the Config has both off, which leaves no view', topics: withSidebar({ topics: false, sessions: false }), tabs: ['topics', 'sessions'] },
+    { name: 'shows only Sessions on a Host with no Host CLI', topics: { kind: 'absent' }, tabs: ['sessions'] },
+    { name: 'shows only Sessions while the Host CLI is installed', topics: { kind: 'installing' }, tabs: ['sessions'] },
+    { name: 'shows only Sessions on an old Host CLI, also with a last snapshot', topics: { kind: 'old', last: snapshot() }, tabs: ['sessions'] },
+    { name: 'shows only Sessions while an old Host CLI is updated', topics: { kind: 'updating', last: snapshot() }, tabs: ['sessions'] },
+    { name: 'shows only Sessions when the Topics read failed and there is no snapshot', topics: { kind: 'failed', error: 'no route', last: null }, tabs: ['sessions'] },
+    { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: snapshot() }, tabs: ['topics', 'sessions'] },
+    { name: 'keeps the tabs of the last snapshot while it reads again', topics: loadingTopics(withSidebar({ topics: true, sessions: false })), tabs: ['topics'] },
+  ])('$name', ({ topics, tabs }) => {
+    expect(hostScreenTabs(topics)).toEqual(tabs);
+  });
+
+  it('opens on the tab the user last chose on this Host, when it is on show', () => {
+    expect(tabOnShow('sessions', ['topics', 'sessions'])).toBe('sessions');
+    expect(tabOnShow(undefined, ['topics', 'sessions'])).toBe('topics');
+    expect(tabOnShow('topics', ['sessions'])).toBe('sessions');
+  });
+});
+
+describe('the Sessions tab of the Host Screen', () => {
+  const sessions = (listing: Listing, topics: HostTopics) =>
+    hostScreen({ tab: 'sessions', listing, topics, attach: null, opened: CLOSED, appearance: 'light' });
+  const withTopics = listed({
+    sessions: [
+      { ...snapshotSession('$1', 'zeta', 't1'), windows: [] },
+      snapshotSession('$2', 'alpha', null),
+      snapshotSession('$3', 'benched', 'b1'),
+    ],
+    unpinned: inPlay({ places: [topicCard('t1')], bench: [topicCard('b1')] }),
+    no_topic: [sid('$2')],
+  });
+
+  it('lists every running Session in the order of the Listing, with its Topic under the name, and no Bench', () => {
+    expect(sessions(answered([running('zeta', 3), running('alpha'), running('benched', 2)]), withTopics)).toEqual([
+      sessionsSection(sessionRow('zeta', 'Topic t1', 3), sessionRow('alpha', 'No Topic', 1), sessionRow('benched', 'Topic b1', 2)),
+    ]);
+  });
+
+  it('says nothing about Topics for a Session the Host has not placed, or on a Host with none', () => {
+    expect(sessions(answered([running('new')]), withTopics)).toEqual([sessionsSection(sessionRow('new', null, 1))]);
+    expect(sessions(answered([running('main', 2)]), { kind: 'absent' })).toEqual([sessionsSection(sessionRow('main', null, 2))]);
+  });
+
+  it('counts the Windows from the snapshot when the Listing came from it', () => {
+    const topics = listed({ sessions: [{ ...snapshotSession('$1', 'main', null), windows: [
+      { id: '@1', index: 0, name: 'zsh', active: true, mark: null },
+      { id: '@2', index: 1, name: 'vim', active: false, mark: null },
+    ] }] });
+    expect(runningSessions(answered([{ name: 'main', windowCount: undefined }]), topics)).toEqual([
+      { name: 'main', windowCount: 2, topicLabel: null },
+    ]);
+  });
+
+  it('says so when the Host has no Session', () => {
+    expect(sessions(answered([]), withTopics)).toEqual([sessionsSection(note('No Sessions on this Host.'))]);
+  });
+
+  it('shows the refusal of a Host that could not be asked', () => {
+    expect(sessions(refused('no route'), TOPICS_UNASKED)).toEqual([sessionsSection({ kind: 'refused', message: 'no route' })]);
+  });
+
+  it.each<{ name: string; topics: HostTopics; row: HostScreenRow }>([
+    { name: 'the Host CLI is being installed', topics: withHostCli({ kind: 'absent' }, INSTALL_RUNNING), row: { kind: 'checking', text: 'Installing Muxify on this Host…' } },
+    { name: 'the Host CLI is old', topics: { kind: 'old', last: null }, row: note('Update Muxify on this Host') },
+    { name: 'an old Host CLI is being updated', topics: withHostCli({ kind: 'old', last: null }, INSTALL_RUNNING), row: { kind: 'checking', text: 'Updating Muxify on this Host…' } },
+    {
+      name: 'the Host CLI could not be installed',
+      topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
+      row: { kind: 'refused', message: 'Could not install Muxify on this Host: neither curl nor wget' },
+    },
+  ])('says above the Sessions why the Host has no Topics tab, when $name', ({ topics, row }) => {
+    expect(sessions(answered([running('main')]), topics)).toEqual([sessionsSection(row, sessionRow('main', null, 1))]);
+  });
+
+  it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Topics tab has the error', () => {
+    expect(sessions(answered([running('main')]), { kind: 'absent' })[0]?.rows).toHaveLength(1);
+    expect(sessions(answered([]), { kind: 'failed', error: 'no route', last: snapshot() })[0]?.rows).toEqual([
+      note('No Sessions on this Host.'),
+    ]);
+  });
+});
+
+describe('the Bench peek, which shows where the Attach is while the Bench row hides it', () => {
+  const host = listed({
+    sessions: [
+      snapshotSession('$1', 'benched/b2', 'b2'),
+      snapshotSession('$2', 'loose', null),
+      snapshotSession('$3', 'placed/t1', 't1'),
+      snapshotSession('$4', 'locked', null),
+    ],
+    unpinned: inPlay({
+      places: [topicCard('t1')],
+      bench: [topicCard('b1'), topicCard('b2'), { kind: 'session', mark: null, sessions: [sid('$4')] }],
+    }),
+    no_topic: [sid('$2')],
+  });
+  const benchRows = (attach: AttachPlace | null, opened: OpenableRow[] = []) =>
+    hostScreen({ tab: 'topics', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light' })
+      .find((shown) => shown.id === 'bench')?.rows;
+  const CLOSED_BENCH: HostScreenRow = { kind: 'bench', opened: false };
+
+  it('hides every Benched card with no Attach on the Host', () => {
+    expect(benchRows(null)).toEqual([CLOSED_BENCH]);
+  });
+
+  it('shows the Benched card of the Topic the Attach holds, and no other', () => {
+    expect(benchRows({ sessionName: 'benched/b2', topic: tid('b2') })).toEqual([CLOSED_BENCH, topicRow('b2', { section: 'bench' })]);
+  });
+
+  it('finds the Topic from the Session when the Attach holds none', () => {
+    expect(benchRows({ sessionName: 'benched/b2', topic: null })).toEqual([CLOSED_BENCH, topicRow('b2', { section: 'bench' })]);
+  });
+
+  it('shows the Benched card of a Locked Session that the Attach is on', () => {
+    expect(benchRows({ sessionName: 'locked', topic: null })).toEqual([
+      CLOSED_BENCH,
+      { kind: 'locked-session', name: 'locked', mark: null, pinned: false },
+    ]);
+  });
+
+  it('shows the Session of the Attach under the Bench row when it is in No Topic', () => {
+    expect(benchRows({ sessionName: 'loose', topic: null })).toEqual([CLOSED_BENCH, sessionRow('loose')]);
+  });
+
+  it('leaves that Session to the No Topic row once the row is opened', () => {
+    expect(benchRows({ sessionName: 'loose', topic: null }, ['no-topic'])).toEqual([CLOSED_BENCH]);
+  });
+
+  it('keeps that Session under the row of an opened Bench, above its cards, as the Mac does', () => {
+    expect(benchRows({ sessionName: 'loose', topic: null }, ['bench'])?.slice(0, 2)).toEqual([
+      { kind: 'bench', opened: true },
+      sessionRow('loose'),
+    ]);
+  });
+
+  it('shows nothing more for an Attach whose Topic is In Play, or whose Session the Host does not list', () => {
+    expect(benchRows({ sessionName: 'placed/t1', topic: tid('t1') })).toEqual([CLOSED_BENCH]);
+    expect(benchRows({ sessionName: 'gone', topic: null })).toEqual([CLOSED_BENCH]);
+  });
+
+  it('shows the Session of the Attach in No Topic on a Host with an empty Bench', () => {
+    const topics = listed({ sessions: [snapshotSession('$2', 'loose', null)], no_topic: [sid('$2')] });
+    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light' }))
+      .toEqual([
+        section('bench', null, sessionRow('loose')),
+        section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
+      ]);
+  });
+
+  it('shows no peek in the Topics of the Title Sheet, where the Bench is open', () => {
+    const rows = topicSections(host, 'light').flatMap((shown) => shown.rows);
+    expect(rows.filter((row) => row.kind === 'session')).toEqual([]);
   });
 });

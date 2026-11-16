@@ -54,8 +54,6 @@ export interface HostStore {
   fingerprintFor(hostId: string): Promise<Fingerprint | undefined>;
   /** Records that this phone has just opened a Session, stamped now. */
   rememberSession(hostId: string, name: string): Promise<void>;
-  /** Drops the memory of a Session. The Session itself is left running. */
-  forgetSession(hostId: string, name: string): Promise<void>;
   /** A Host's remembered Sessions, most recently opened first. */
   recentSessionsFor(hostId: string): Promise<RecentSession[]>;
   /** Records where the user is now, for Reconnect on start. */
@@ -215,16 +213,6 @@ export function createHostStore(
           ...records.recentSessions.filter((candidate) => !sameSession(candidate, hostId, name)),
           { hostId, name, lastOpenedAt: now().toISOString() },
         ],
-      });
-    },
-
-    async forgetSession(hostId: string, name: string): Promise<void> {
-      const records = await load();
-      await save({
-        ...records,
-        recentSessions: records.recentSessions.filter(
-          (candidate) => !sameSession(candidate, hostId, name),
-        ),
       });
     },
 

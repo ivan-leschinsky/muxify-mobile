@@ -4,11 +4,17 @@
  *
  * Every Keyboard Shortcut holds ⌘. tmux has no ⌘ to give a Pane, so a key
  * with ⌘ is never one a program in a Pane waits for, and taking it costs the
- * Pane nothing. A chord without ⌘ would take a key away from the Pane.
+ * Pane nothing. A chord without ⌘ would take a key away from the Pane. The
+ * List Keys are the one set without ⌘: they work only while a list of Go to
+ * or Add a Session has the keys, where no Pane waits for them.
  */
 
 export const KEYBOARD_ACTIONS = [
   'open-settings',
+  'go-to',
+  'new-topic',
+  'switch-tab',
+  'new-session-here',
   'split-right',
   'split-down',
   'pane-left',
@@ -22,6 +28,10 @@ export type KeyboardAction = (typeof KEYBOARD_ACTIONS)[number];
 
 export const KEYBOARD_ACTION_TITLES: Record<KeyboardAction, string> = {
   'open-settings': 'Open Settings',
+  'go-to': 'Go to',
+  'new-topic': 'New Topic',
+  'switch-tab': 'Switch between Topics and Sessions',
+  'new-session-here': 'New Session here',
   'split-right': 'Split right',
   'split-down': 'Split down',
   'pane-left': 'Pane to the left',
@@ -46,10 +56,14 @@ export interface KeyChord {
 /** The chords the user has changed. An action not in it has its default. */
 export type KeyboardShortcuts = Partial<Record<KeyboardAction, KeyChord>>;
 
-const chord = (key: string, shift = false): KeyChord => ({ key, shift, option: false, control: false });
+const chord = (key: string, shift = false, option = false): KeyChord => ({ key, shift, option, control: false });
 
 export const DEFAULT_CHORDS: Readonly<Record<KeyboardAction, KeyChord>> = {
   'open-settings': chord(','),
+  'go-to': chord('p'),
+  'new-topic': chord('n'),
+  'switch-tab': chord('t', false, true),
+  'new-session-here': chord('\r'),
   'split-right': chord('d'),
   'split-down': chord('d', true),
   'pane-left': chord('h', true),
@@ -87,8 +101,40 @@ const KEY_NAMES: Record<string, string> = {
 
 /** The chord as the system writes one, modifiers in Apple's order: ⌃⌥⇧⌘D. */
 export function chordLabel(value: KeyChord): string {
-  const modifiers = `${value.control ? '⌃' : ''}${value.option ? '⌥' : ''}${value.shift ? '⇧' : ''}⌘`;
+  return keyLabel(value, true);
+}
+
+function keyLabel(value: KeyChord, command: boolean): string {
+  const modifiers = `${value.control ? '⌃' : ''}${value.option ? '⌥' : ''}${value.shift ? '⇧' : ''}${command ? '⌘' : ''}`;
   return modifiers + (KEY_NAMES[value.key] ?? value.key.toUpperCase());
+}
+
+/**
+ * The keys of a list in Go to and Add a Session, as the Mac's Command Palette
+ * has them. They hold no ⌘ and the user cannot change them. A screen handles
+ * them only while its list has the keys.
+ */
+export const LIST_KEYS = ['list-up', 'list-down', 'list-pick', 'list-close', 'list-worktree'] as const;
+export type ListKey = (typeof LIST_KEYS)[number];
+
+export const LIST_KEY_TITLES: Record<ListKey, string> = {
+  'list-up': 'Row above',
+  'list-down': 'Row below',
+  'list-pick': 'Pick the row',
+  'list-close': 'Close the list',
+  'list-worktree': 'Add a Session in a new Worktree',
+};
+
+export const LIST_KEY_CHORDS: Readonly<Record<ListKey, KeyChord>> = {
+  'list-up': chord('UIKeyInputUpArrow'),
+  'list-down': chord('UIKeyInputDownArrow'),
+  'list-pick': chord('\r'),
+  'list-close': chord('UIKeyInputEscape'),
+  'list-worktree': chord('\r', false, true),
+};
+
+export function listKeyLabel(key: ListKey): string {
+  return keyLabel(LIST_KEY_CHORDS[key], false);
 }
 
 /** A key the recorder took, with every modifier it saw, ⌘ included. */

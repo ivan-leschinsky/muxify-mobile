@@ -1,0 +1,346 @@
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+
+import { Button, Form, Host, HStack, ScrollView, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  autocorrectionDisabled,
+  background,
+  disabled,
+  environment,
+  listRowBackground,
+  onSubmit,
+  scrollContentBackground,
+  submitLabel,
+  textInputAutocapitalization,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
+
+import { FieldError } from '@/components/field-error';
+import { GoToList, type FolderRow } from '@/components/go-to-list';
+import { HostWriteRow } from '@/components/host-write-row';
+import { SectionHeader } from '@/components/section-header';
+import { TagChoice } from '@/components/tag-choice';
+import { goToRows } from '@/domain/go-to';
+import { useGoToPaths } from '@/hooks/use-go-to-paths';
+import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
+import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
+import { toggled } from '@/lib/toggled';
+import { useSettings } from '@/settings/settings-context';
+import { describeConnectionFailure } from '@/ssh/failures';
+import { deviceHostStore } from '@/storage/device-store';
+import type { Host as HostRecord } from '@/storage/records';
+import { useOpenSession } from '@/tmux/attach-context';
+import { appConnections } from '@/tmux/ssh-connection';
+import { folderSessionName } from '@/topics/add-session';
+import type { Tag, TopicId } from '@/topics/environment';
+import { emptyTopicTitled } from '@/topics/new-topic';
+import { intentAfter, intentFor, type Intent } from '@/topics/request';
+import type { TopicDetail } from '@/topics/topic-detail';
+import { recordVisit } from '@/topics/visit';
+
+/**
+ * Where the sheet is. `title`: the user gives the Topic a title and Tags.
+ * `add-session`: the Host has the Empty Topic, and the user picks the folder
+ * of its first Session. `made` is the Session the Host made, when the Attach
+ * to it failed: a second try attaches and sends no second write.
+ */
+type Step =
+  | { step: 'title' }
+  | { step: 'add-session'; topic: TopicDetail; made: string | null };
+
+/** What the user asked for in the second step, so that Retry sends the same. */
+interface Addition {
+  folder: string;
+  /** In a new Worktree of the folder. */
+  worktree: boolean;
+}
+
+/**
+ * New Topic, as ⌘N on the Mac: a title, then a Session Path. The first step
+ * makes an Empty Topic on the Host. The same sheet then lists the Host's
+ * Session Paths, and a pick adds a Session there and opens it. Add later
+ * leaves the Empty Topic on the Host.
+ */
+export default function NewTopicScreen() {
+  const router = useRouter();
+  const { hostId } = useLocalSearchParams<{ hostId: string }>();
+  const { appearance, palette } = useSettings();
+  const openSession = useOpenSession();
+  const [step, setStep] = useState<Step>({ step: 'title' });
+  const { write, hostName, send, check } = useHostWrite(hostId);
+  const locked = write.kind === 'running' || write.kind === 'unsure';
+
+  const [tagsAttempt, setTagsAttempt] = useState(0);
+  const [tagsRead, setTagsRead] = useState<{ attempt: number; tags: Tag[] | null; error?: string } | null>(null);
+  useEffect(() => {
+    let left = false;
+    void (async () => {
+      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
+      if (!host) throw new Error('This Host is no longer saved.');
+      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
+      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to create Topics.');
+      if (!left) setTagsRead({ attempt: tagsAttempt, tags: result.snapshot.tags });
+    })().catch((error) => { if (!left) setTagsRead({ attempt: tagsAttempt, tags: null, error: describeConnectionFailure(error) }); });
+    return () => { left = true; };
+  }, [hostId, tagsAttempt]);
+  const newestTagsRead = tagsRead?.attempt === tagsAttempt ? tagsRead : null;
+  const tags = newestTagsRead?.tags ?? null;
+  const tagError = newestTagsRead?.error;
+
+  const title = useNativeState('');
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  const [titleError, setTitleError] = useState<string | undefined>();
+  // The Request of the last create, so a Retry with the same title and Tags is the same Request.
+  const [created, setCreated] = useState<Intent | null>(null);
+  // In Config order, as the Mac lists a Topic's Tags.
+  const chosenTags = (tags ?? []).filter((tag) => chosen.has(tag.name)).map((tag) => tag.name);
+
+  const folder = useNativeState('');
+  const [query, setQuery] = useState('');
+  const [highlighted, setHighlighted] = useState(0);
+  const [listedAt] = useState(() => new Date());
+  const adding = step.step === 'add-session';
+  const { paths, reading, ask } = useGoToPaths(hostId, true, adding && query.trim() === '');
+  // Read when the sheet opens, so the list is there when the title is sent.
+  useEffect(() => ask(''), [ask]);
+  const rows = adding ? goToRows({ query, mode: 'paths', sessions: [], paths, recent: [] }) : [];
+  const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
+  // The Request of the last add, so a second try at the same folder finds the Session of the first.
+  const [added, setAdded] = useState<{ addition: Addition; intent: Intent } | null>(null);
+
+  const toAddSession = (topic: TopicId | undefined, label: string) => {
+    if (topic === undefined) return;
+    setStep({ step: 'add-session', topic: { id: topic, label, note: null, tags: chosenTags, state: 'empty', sessions: [] }, made: null });
+  };
+
+  const create = () => {
+    if (locked || step.step !== 'title') return;
+    const wanted = title.value.trim();
+    if (wanted === '') {
+      setTitleError('Give the Topic a title.');
+      return;
+    }
+    setTitleError(undefined);
+    const sent = intentFor(created, JSON.stringify([wanted, chosenTags]));
+    setCreated(sent);
+    void send(async ({ host, step: at, refuse, unsure }) => {
+      const made = await appConnections().write(host, (transport, muxify) => {
+        at('sending');
+        return muxify.create((command) => transport.exec(command), wanted, chosenTags, sent.request);
+      });
+      setCreated(intentAfter(sent, made));
+      if (made.kind === 'failed') return refuse(made.error);
+      if (made.kind === 'unknown') return unsure(made.message);
+      return made.topic;
+    }).then((topic) => toAddSession(topic, wanted));
+  };
+
+  const checkCreated = () => {
+    const wanted = title.value.trim();
+    void check(async ({ host, refuse }) => {
+      const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
+      if (read.kind !== 'listed') throw new Error(read.kind === 'failed' ? read.error : 'Update Muxify on this Host to create Topics.');
+      return emptyTopicTitled(read.snapshot, wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Create sends it again.`);
+    }).then((topic) => toAddSession(topic, wanted));
+  };
+
+  const attach = async (topic: TopicDetail, session: string, host: HostRecord, at: HostWriteRun['step'], visited?: string) => {
+    setStep({ step: 'add-session', topic, made: session });
+    at('attaching');
+    await openSession({ hostId, destination: { sessionName: session, topic: { id: topic.id, seed: topic } } });
+    if (visited !== undefined) recordVisit(host, visited);
+    return true as const;
+  };
+  const opened = (done: true | undefined) => { if (done) router.dismissTo('/terminal'); };
+
+  const add = (addition: Addition) => {
+    if (step.step !== 'add-session') return;
+    const { topic, made } = step;
+    if (made !== null) {
+      void send(({ host, step: at }) => attach(topic, made, host, at)).then(opened);
+      return;
+    }
+    const intent = intentFor(added?.intent ?? null, JSON.stringify([addition.folder, addition.worktree]));
+    setAdded({ addition, intent });
+    void send(async ({ host, step: at, refuse, unsure }) => {
+      const result = await appConnections().write(host, (transport, muxify) => {
+        at('sending');
+        const exec = (command: string) => transport.exec(command);
+        if (addition.worktree) return muxify.addWorktreeSession(exec, topic.id, addition.folder, intent.request);
+        // The Topic is new, so no Session of it has the name of the folder's Session Path.
+        const name = paths.rows.find((row) => row.directory === addition.folder)?.name ?? folderSessionName(addition.folder);
+        return muxify.addSession(exec, topic.id, addition.folder, intent.request, name);
+      });
+      if (intentAfter(intent, result) === null) setAdded(null);
+      if (result.kind === 'failed') return refuse(result.error);
+      if (result.kind === 'unknown') return unsure(result.message);
+      return attach(topic, result.session, host, at, addition.folder);
+    }).then(opened);
+  };
+  const addAt = (row: FolderRow | undefined, worktree: boolean) => {
+    if (row === undefined || locked) return;
+    add({ folder: row.kind === 'path' ? row.path.directory : row.directory, worktree });
+  };
+  const retryAdd = () => { if (added) add(added.addition); };
+
+  const checkAdded = () => {
+    if (step.step !== 'add-session') return;
+    const { topic } = step;
+    void check(async ({ host, step: at, refuse }) => {
+      const read = await appConnections().read(host, (transport, muxify) => muxify.show((command) => transport.exec(command), topic.id));
+      if (read.kind === 'failed') throw new Error(read.error);
+      const [session] = read.topic.sessions;
+      if (!session) return refuse(`${topic.label} has no Session on ${host.displayName}. Pick the folder again to add it.`);
+      return attach(topic, session.name, host, at);
+    }).then(opened);
+  };
+
+  // Not while a write runs: its answer would open a Session after the sheet is gone.
+  const close = () => { if (write.kind !== 'running') router.back(); };
+
+  useScreenKeyboardShortcuts(adding && !locked ? {
+    'list-up': () => setHighlighted(Math.max(onShow - 1, 0)),
+    'list-down': () => setHighlighted(Math.min(onShow + 1, rows.length - 1)),
+    'list-pick': () => addAt(pathRow(rows[onShow]), false),
+    'list-worktree': () => addAt(pathRow(rows[onShow]), true),
+    'list-close': close,
+  } : {});
+
+  const form = [
+    environment('colorScheme', appearance),
+    scrollContentBackground('hidden'),
+    background(palette.background),
+    tint(palette.controlAccent),
+  ];
+
+  return (
+    <View style={styles.fill}>
+      <Stack.Screen options={{ title: step.step === 'title' ? 'New Topic' : step.topic.label, gestureEnabled: write.kind !== 'running' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button tintColor={palette.controlAccent} disabled={write.kind === 'running'} onPress={close}>
+          {step.step === 'title' ? 'Cancel' : 'Add later'}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+      {step.step === 'title' ? (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button variant="done" tintColor={palette.controlAccent} disabled={locked} onPress={create}>
+            Create
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      ) : null}
+
+      <Host style={styles.fill} matchContents={false}>
+        {step.step === 'title' ? (
+          <Form modifiers={form}>
+            <HostWriteRow
+              write={write}
+              words={{ host: hostName, sending: `Creating ${title.value.trim()}`, mayHaveHappened: 'The Topic may exist.' }}
+              palette={palette}
+              onRetry={create}
+              onCheck={checkCreated}
+            />
+            <Section
+              header={<SectionHeader palette={palette}>Title</SectionHeader>}
+              modifiers={[listRowBackground(palette.rowSurface)]}>
+              <TextField
+                text={title}
+                autoFocus
+                placeholder="Fix login"
+                modifiers={[accessibilityLabel('Topic title'), disabled(locked), submitLabel('next'), onSubmit(create)]}
+              />
+              <FieldError error={titleError} palette={palette} />
+            </Section>
+
+            {tags === null ? <Section
+              header={<SectionHeader palette={palette}>Tags</SectionHeader>}
+              modifiers={[listRowBackground(palette.rowSurface)]}>
+              <Text>{tagError ?? 'Reading Tags…'}</Text>
+              {tagError ? <Button label="Retry Tags" onPress={() => setTagsAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
+            </Section> : tags.length === 0 ? null : (
+              <Section
+                header={<SectionHeader palette={palette}>Tags</SectionHeader>}
+                modifiers={[listRowBackground(palette.rowSurface)]}>
+                <ScrollView axes="horizontal" showsIndicators={false}>
+                  <HStack spacing={8}>
+                    {tags.map((tag) => (
+                      <TagChoice
+                        key={tag.name}
+                        tag={tag}
+                        chosen={chosen.has(tag.name)}
+                        appearance={appearance}
+                        fallbackColor={palette.secondaryLabel}
+                        disabled={locked}
+                        onPress={() => setChosen((previous) => toggled(previous, tag.name))}
+                      />
+                    ))}
+                  </HStack>
+                </ScrollView>
+              </Section>
+            )}
+          </Form>
+        ) : (
+          <Form modifiers={form}>
+            <HostWriteRow
+              write={write}
+              words={{
+                host: hostName,
+                sending: `Creating a Session in ${step.topic.label}`,
+                attaching: step.made === null ? undefined : `Opening ${step.made}`,
+                mayHaveHappened: 'The Session may exist.',
+              }}
+              palette={palette}
+              onRetry={retryAdd}
+              retryLabel={step.made === null ? 'Retry' : 'Retry Attach'}
+              onCheck={checkAdded}
+            />
+            <Section
+              header={<SectionHeader palette={palette}>Add a Session</SectionHeader>}
+              modifiers={[listRowBackground(palette.rowSurface)]}>
+              <TextField
+                text={folder}
+                autoFocus
+                onTextChange={(value) => {
+                  setQuery(value);
+                  setHighlighted(0);
+                  ask(value);
+                }}
+                placeholder="Search folders or type a path"
+                modifiers={[
+                  accessibilityLabel('Search folders'),
+                  textInputAutocapitalization('never'),
+                  autocorrectionDisabled(),
+                  disabled(locked || step.made !== null),
+                  submitLabel('go'),
+                  onSubmit(() => addAt(pathRow(rows[onShow]), false)),
+                ]}
+              />
+            </Section>
+            <GoToList
+              rows={rows}
+              highlighted={onShow}
+              reading={reading}
+              palette={palette}
+              now={listedAt}
+              locked={locked || step.made !== null}
+              onPick={(row) => addAt(pathRow(row), false)}
+              folderMenu={{ label: 'In a new Worktree', icon: 'arrow.triangle.branch', onPress: (row) => addAt(row, true) }}
+            />
+          </Form>
+        )}
+      </Host>
+    </View>
+  );
+}
+
+/** The list of this sheet has no running Session, so every row is a folder. */
+function pathRow(row: ReturnType<typeof goToRows>[number] | undefined): FolderRow | undefined {
+  return row?.kind === 'session' ? undefined : row;
+}
+
+const styles = StyleSheet.create({
+  fill: {
+    flex: 1,
+  },
+});

@@ -6,7 +6,7 @@
 #
 # The Topic starts with a Note, #work and #e2eold, a Tag that the Config does
 # not define: the script gives it that Tag through a copy of the Config that
-# defines it. It is pinned, so it is at the top of the Topics list.
+# defines it. It is pinned, so it is at the top of the Topics tab.
 #
 #   bash e2e/edit-topic.sh
 
@@ -17,7 +17,6 @@ set -uo pipefail
 APP=dev.muxify.app
 TITLE="e2e Edit Topic"
 RENAMED="e2e Edited it's"
-SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
 WITH_E2EOLD="$MUXIFY_E2E_ROOT/with-e2eold.yaml"
 
 # Asserts on the Topic as the Mac has it. $1 is a Python expression of `topic`.
@@ -30,14 +29,7 @@ print("the Mac has", topic["title"], topic["note"], topic["tags"])
 ' "$1"
 }
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-path = sys.argv[1]
-settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
-json.dump(settings, open(path, "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 
 { cat "$MUXIFY_CONFIG"; printf '    e2eold:\n      color: {light: red, dark: red}\n'; } >"$WITH_E2EOLD"
 

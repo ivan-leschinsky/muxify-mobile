@@ -12,8 +12,7 @@ import type { SFSymbol } from 'expo-symbols';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
-import type { HostScreenRow, OpenableRow, RecentRow } from '@/domain/host-screen';
-import { timeAgoFrom } from '@/lib/relative-time';
+import type { HostScreenRow, OpenableRow, SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { menuActions, TOPIC_ACTION_ICON, TOPIC_ACTION_LABEL, type TopicAction } from '@/topics/topic-action';
@@ -55,8 +54,7 @@ export type MoveRole =
 /** A key for a row among its siblings, unique within one section. */
 export function rowKey(row: HostScreenRow, index: number): string {
   switch (row.kind) {
-    case 'recent':
-    case 'available':
+    case 'session':
       return row.name;
     case 'topic':
     case 'open-place':
@@ -77,14 +75,12 @@ export function rowKey(row: HostScreenRow, index: number): string {
 export function HostScreenRowView({
   row,
   palette,
-  openedAt,
   attached,
   actions,
   move,
 }: {
   row: HostScreenRow;
   palette: Appearance;
-  openedAt: Date;
   /** The phase of the Attach on this Session, or undefined when it is not. */
   attached?: AttachPhase;
   actions: RowActions;
@@ -96,29 +92,8 @@ export function HostScreenRowView({
     if (face !== null) return <MovingRow face={face} move={move} palette={palette} />;
   }
   switch (row.kind) {
-    case 'recent':
-      return (
-        <RecentSessionRow
-          row={row}
-          palette={palette}
-          openedAt={openedAt}
-          attached={attached}
-          onPress={() => actions.onOpenSession(row.name)}
-        />
-      );
-    case 'available':
-      return (
-        <Button
-          onPress={() => actions.onOpenSession(row.name)}
-          modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
-          <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-            <Image systemName="terminal" size={20} color={palette.rowIcon} />
-            <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
-            <Spacer />
-            <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
-          </HStack>
-        </Button>
-      );
+    case 'session':
+      return <SessionRowView row={row} palette={palette} attached={attached} onPress={() => actions.onOpenSession(row.name)} />;
     case 'checking':
       return (
         <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
@@ -419,27 +394,27 @@ function MovingRow({ face, move, palette }: { face: MoveFace; move: MoveRole; pa
 }
 
 /**
- * A remembered Session: what it is called, when you last opened it, who is on it.
+ * A running Session: what it is called, which Topic it is in, and how many
+ * Windows it has.
  *
- * The one that is attached says so where the "Opened 2 hr ago" line would be.
- * The way to end it is a swipe away, with Forget, rather than in the row:
- * nothing here starts or stops a Connection, and the row itself is navigation.
+ * The one that is attached says its phase in place of that line. The way to
+ * end the Attach is a swipe away rather than in the row: nothing here starts
+ * or stops a Connection, and the row itself is navigation.
  */
-function RecentSessionRow({
+function SessionRowView({
   row,
   palette,
-  openedAt,
   attached,
   onPress,
 }: {
-  row: RecentRow;
+  row: SessionRow;
   palette: Appearance;
-  openedAt: Date;
   /** The phase of the Attach on this Session, or undefined when it is not. */
   attached?: AttachPhase;
   onPress: () => void;
 }) {
-  const opened = timeAgoFrom(row.lastOpenedAt, openedAt);
+  const windows = row.windowCount === undefined ? null : `${row.windowCount} ${row.windowCount === 1 ? 'Window' : 'Windows'}`;
+  const about = [row.topicLabel, windows].filter((part) => part !== null).join(' · ');
   return (
     <Button
       onPress={onPress}
@@ -456,10 +431,8 @@ function RecentSessionRow({
             <Text modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>
               {phaseLabel(attached)}
             </Text>
-          ) : opened === undefined ? null : (
-            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
-              {`Opened ${opened}`}
-            </Text>
+          ) : about === '' ? null : (
+            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{about}</Text>
           )}
         </VStack>
         <Spacer />

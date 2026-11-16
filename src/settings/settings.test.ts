@@ -1,15 +1,10 @@
 import {
   clampFontSize,
   DEFAULT_SETTINGS,
-  hiddenHostScreenLists,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
-  moveHostScreenLists,
-  mustStayOn,
   parseSettings,
   resolveTheme,
-  switchHostScreenList,
-  type HostScreenLists,
 } from './settings';
 
 describe('clampFontSize', () => {
@@ -41,7 +36,7 @@ describe('parseSettings', () => {
         lightTheme: 'gruvbox-light',
         darkTheme: 'gruvbox-dark-hard',
         zoomMultipaneWindows: false,
-        hostScreenLists: ['topics', 'recent', 'sessions'],
+        hostScreenTabs: { host1: 'sessions' },
         reconnectOnStart: true,
       }),
     ).toEqual({
@@ -51,7 +46,7 @@ describe('parseSettings', () => {
       lightTheme: 'gruvbox-light',
       darkTheme: 'gruvbox-dark-hard',
       zoomMultipaneWindows: false,
-      hostScreenLists: ['topics', 'recent', 'sessions'],
+      hostScreenTabs: { host1: 'sessions' },
       reconnectOnStart: true,
     });
   });
@@ -112,7 +107,7 @@ describe('parseSettings', () => {
         lightTheme: 42,
         darkTheme: 'dracula',
         zoomMultipaneWindows: 'yes',
-        hostScreenLists: 7,
+        hostScreenTabs: 7,
         reconnectOnStart: 'yes',
       }),
     ).toEqual({
@@ -122,7 +117,6 @@ describe('parseSettings', () => {
       lightTheme: 'solarized-light',
       darkTheme: 'dracula',
       zoomMultipaneWindows: true,
-      hostScreenLists: ['recent', 'sessions'],
       reconnectOnStart: false,
     });
   });
@@ -137,108 +131,17 @@ describe('parseSettings', () => {
     expect(parseSettings({ reconnectOnStart: saved }).reconnectOnStart).toBe(on);
   });
 
-  it.each<[string, unknown, HostScreenLists]>([
-    ['missing', undefined, ['recent', 'sessions']],
-    ['not an array', 'topics', ['recent', 'sessions']],
-    ['empty', [], ['recent', 'sessions']],
-    ['only unknown entries', ['bench', 3, null], ['recent', 'sessions']],
-    ['only Recent Sessions, which cannot reach every Session', ['recent'], ['recent', 'sessions']],
-    ['one list', ['topics'], ['topics']],
-    ['every list, in their order', ['topics', 'sessions', 'recent'], ['topics', 'sessions', 'recent']],
-    ['unknown entries among known ones', ['bench', 'topics', 42], ['topics']],
-    [
-      'a repeated entry, kept where it first came',
-      ['topics', 'sessions', 'topics'],
-      ['topics', 'sessions'],
-    ],
-  ])('reads Host Screen lists that are %s', (_, saved, lists) => {
-    expect(parseSettings({ hostScreenLists: saved }).hostScreenLists).toEqual(lists);
+  it('keeps the last Host Screen tab of each Host, and drops a tab it does not know', () => {
+    expect(parseSettings({ hostScreenTabs: { host1: 'sessions', host2: 'topics', host3: 'recent', host4: 7 } }).hostScreenTabs)
+      .toEqual({ host1: 'sessions', host2: 'topics' });
   });
 
-  // Settings saved before Recent Sessions was a list of its own. With Recent
-  // Sessions first on, the Sessions list was two sections, the Recent ones on
-  // top, so the Host Screen looks the same after the update.
-  it.each<[string, Record<string, unknown>, HostScreenLists]>([
-    [
-      'Recent Sessions first on',
-      { hostScreenLists: ['sessions'], recentSessionsFirst: true },
-      ['recent', 'sessions'],
-    ],
-    [
-      'Recent Sessions first on, below Topics',
-      { hostScreenLists: ['topics', 'sessions'], recentSessionsFirst: true },
-      ['topics', 'recent', 'sessions'],
-    ],
-    [
-      'Recent Sessions first off',
-      { hostScreenLists: ['sessions', 'topics'], recentSessionsFirst: false },
-      ['sessions', 'topics'],
-    ],
-    [
-      'Recent Sessions first on with the Sessions list off',
-      { hostScreenLists: ['topics'], recentSessionsFirst: true },
-      ['topics'],
-    ],
-    [
-      'Recent Sessions first off, from before the lists could be chosen',
-      { recentSessionsFirst: false },
-      ['sessions'],
-    ],
-  ])('moves over settings saved with %s', (_, saved, lists) => {
-    expect(parseSettings(saved).hostScreenLists).toEqual(lists);
-  });
-});
-
-describe('Host Screen lists in Settings', () => {
-  it.each<[HostScreenLists, string[]]>([
-    [['sessions'], ['recent', 'topics']],
-    [['topics'], ['recent', 'sessions']],
-    [['topics', 'recent', 'sessions'], []],
-  ])('with %j shown, offers %j as hidden', (lists, hidden) => {
-    expect(hiddenHostScreenLists(lists)).toEqual(hidden);
-  });
-
-  it('turns a list on at the bottom of the Host Screen', () => {
-    expect(switchHostScreenList(['sessions'], 'topics', true)).toEqual(['sessions', 'topics']);
-  });
-
-  it('turns a list off', () => {
-    expect(switchHostScreenList(['topics', 'sessions'], 'topics', false)).toEqual(['sessions']);
-  });
-
-  it('turns Recent Sessions off whatever else is on', () => {
-    expect(switchHostScreenList(['recent', 'topics'], 'recent', false)).toEqual(['topics']);
-  });
-
-  it.each<[HostScreenLists, 'sessions' | 'topics']>([
-    [['topics'], 'topics'],
-    [['recent', 'sessions'], 'sessions'],
-    [['topics', 'recent'], 'topics'],
-  ])('keeps %j on with %s, the last list that reaches every Session', (lists, list) => {
-    expect(switchHostScreenList(lists, list, false)).toEqual(lists);
-    expect(mustStayOn(lists, list)).toBe(true);
-  });
-
-  it('lets either of Sessions and Topics go while the other is on', () => {
-    expect(mustStayOn(['sessions', 'topics'], 'sessions')).toBe(false);
-    expect(mustStayOn(['recent', 'sessions'], 'recent')).toBe(false);
-  });
-
-  it('moves a list that is on above another', () => {
-    expect(moveHostScreenLists(['sessions', 'topics'], [1], 0)).toEqual(['topics', 'sessions']);
-    expect(moveHostScreenLists(['sessions', 'topics'], [0], 2)).toEqual(['topics', 'sessions']);
-  });
-
-  it('moves one of three lists to the top', () => {
-    expect(moveHostScreenLists(['topics', 'sessions', 'recent'], [2], 0)).toEqual([
-      'recent',
-      'topics',
-      'sessions',
-    ]);
-  });
-
-  it('leaves a single list where it is', () => {
-    expect(moveHostScreenLists(['sessions'], [0], 1)).toEqual(['sessions']);
+  it('carries over none of the Host Screen lists of Configure panels', () => {
+    expect(parseSettings({
+      hostScreenLists: ['topics', 'recent'],
+      recentSessionsFirst: true,
+      hostListPreferences: { version: 1, byHost: { host1: ['sessions'] } },
+    })).toEqual(DEFAULT_SETTINGS);
   });
 });
 

@@ -11,7 +11,7 @@ import type { TopicChange, TopicWrite } from './topic-edit';
 import { topicActionCommand, type TopicAction } from './topic-action';
 import { dropCommand, type Drop } from './topic-drop';
 import { REQUEST_CAPABILITY, RequestUnanswered, type RequestId, type UnknownOutcome } from './request';
-import { parseSessionPaths, type SessionPathsRead } from './session-paths';
+import { parseSessionPathRows, parseSessionPaths, type RankedPathsRead, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
 
@@ -53,6 +53,9 @@ const REQUEST_MISMATCH_ERROR = 'Muxify sent this change in a way that the Host c
  */
 const CHANGE_USAGE_ERROR =
   'muxify on this Host did not take this. It reads a value that starts with - as an option, and an old muxify does not have this command.';
+
+/** The write that records a visit of a folder. It answers `{"visited":{…}}`, which the phone does not read. */
+const VISIT_VERB = 'session-paths visit';
 
 /**
  * Each write takes a Request id, which the caller makes when the user starts
@@ -127,6 +130,35 @@ export interface MuxifyCli {
   addSession(exec: Exec, topic: TopicId, folder: string, request: RequestId, name?: string): Promise<AddSessionRead>;
 
   sessionPaths(exec: Exec, topic: TopicId): Promise<SessionPathsRead>;
+
+  /**
+   * The Session Paths and Worktrees of the Host, with no Topic:
+   * `session-paths --json`. The Host ranks them: for `query` with the Mac's
+   * match, and with no query by last visit, newest first. Only a Host CLI
+   * with the `session-paths` capability has the command.
+   */
+  rankedSessionPaths(exec: Exec, query: string): Promise<RankedPathsRead>;
+
+  /**
+   * Makes a Session in no Topic at a folder on the Host: `session new`. The
+   * Host gives it `name`, or `name+2` and so on when a Session has the name.
+   * A folder that is not there, or any other refusal, fails with the Host's
+   * reason, and the Host makes nothing.
+   */
+  newSession(exec: Exec, folder: string, name: string, request: RequestId): Promise<AddSessionRead>;
+
+  /**
+   * Adds a Session to a Topic in a new Worktree of the folder, on a new branch
+   * that the Host names from the Topic: `topic add-session --worktree`. It
+   * answers as `addSession` does.
+   */
+  addWorktreeSession(exec: Exec, topic: TopicId, folder: string, request: RequestId): Promise<AddSessionRead>;
+
+  /**
+   * Tells the Host that the user opened a Session at this folder, so the Mac
+   * and the phone rank it by one last visit.
+   */
+  visit(exec: Exec, folder: string, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Makes the remembered Sessions, Windows, Tabs and Agents of a Dormant or
@@ -236,13 +268,11 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
     const parsed = parseAnswer(result.stdout, (json) => {
       // First, so that a snapshot this phone cannot read does not hide what the Host CLI can do.
-      const offered = parseCapabilities(json);
-      capabilities = new Set(offered);
-      const snapshot = parseEnvironmentOrOld(json);
-      return snapshot === 'old' ? snapshot : { snapshot, capabilities: offered };
+      capabilities = new Set(parseCapabilities(json));
+      return parseEnvironmentOrOld(json);
     });
     if ('error' in parsed) return { kind: 'failed', ...parsed };
-    return parsed.value === 'old' ? { kind: 'old' } : { kind: 'listed', ...parsed.value };
+    return parsed.value === 'old' ? { kind: 'old' } : { kind: 'listed', snapshot: parsed.value };
   }
 
   /**
@@ -301,12 +331,22 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     return parseAnswer(result.stdout, parse);
   }
 
+  async function makeSession(exec: Exec, args: string, request: RequestId, withRequest?: string): Promise<AddSessionRead> {
+    const parsed = await writeFor(exec, args, request, parseAddedSession, withRequest);
+    if ('stopped' in parsed) return parsed.stopped;
+    return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'added', session: parsed.value };
+  }
+
   /** One write on a Topic: `<command> --topic <id> --json`. A refusal fails with the Host's reason. */
-  async function writeTopic(exec: Exec, command: string, topic: TopicId, request: RequestId): Promise<TopicWrite> {
+  const writeTopic = (exec: Exec, command: string, topic: TopicId, request: RequestId) =>
+    writeChange(exec, `${command} --topic ${shellQuote(topic)} --json`, request);
+
+  /** One write whose answer says only that it changed the Host. A refusal fails with the Host's reason. */
+  async function writeChange(exec: Exec, args: string, request: RequestId): Promise<TopicWrite> {
     const path = await locate(exec);
     if (path === null) return { kind: 'failed', error: NO_MUXIFY };
 
-    const { result, stopped } = await send(exec, path, `${command} --topic ${shellQuote(topic)} --json`, request);
+    const { result, stopped } = await send(exec, path, args, request);
     if (stopped) return stopped;
     if (result.exitCode === USAGE_ERROR) return { kind: 'failed', error: CHANGE_USAGE_ERROR };
     return result.exitCode === 0
@@ -349,16 +389,35 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', choices: parsed.value };
     },
 
-    async addSession(exec, topic, folder, request, name) {
-      const parsed = await writeFor(
+    addSession: (exec, topic, folder, request, name) => makeSession(
+      exec,
+      `topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
+      request,
+      name === undefined ? '' : ` --name ${shellQuote(name)}`,
+    ),
+
+    addWorktreeSession: (exec, topic, folder, request) => makeSession(
+      exec,
+      `topic add-session ${folderArgument(folder)} --worktree --topic ${shellQuote(topic)} --json`,
+      request,
+    ),
+
+    newSession: (exec, folder, name, request) => makeSession(
+      exec,
+      `session new ${folderArgument(folder)} --name ${shellQuote(name)} --json`,
+      request,
+    ),
+
+    visit: (exec, folder, request) => writeChange(exec, `${VISIT_VERB} ${folderArgument(folder)} --json`, request),
+
+    async rankedSessionPaths(exec, query) {
+      const text = query.trim();
+      const parsed = await answerTo(
         exec,
-        `topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
-        request,
-        parseAddedSession,
-        name === undefined ? '' : ` --name ${shellQuote(name)}`,
+        `session-paths${text === '' ? '' : ` --query ${shellQuote(text)}`} --json`,
+        parseSessionPathRows,
       );
-      if ('stopped' in parsed) return parsed.stopped;
-      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'added', session: parsed.value };
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', rows: parsed.value };
     },
 
     async browserTabs(exec, window) {

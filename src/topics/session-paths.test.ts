@@ -1,5 +1,5 @@
 import { topicId } from './environment';
-import { parseSessionPaths, sessionPathSections } from './session-paths';
+import { parseSessionPathRows, parseSessionPaths, sessionPathRowsJson, sessionPathSections } from './session-paths';
 
 const id = topicId('topic', 'id');
 const row = {
@@ -53,4 +53,32 @@ it('omits empty sections and does not change a selected directory', () => {
   const value = parseSessionPaths(response([{ ...row, directory: ' /exact folder/ ' }]), id);
   expect(sessionPathSections(value, 'exact')[0].choices[0].directory).toBe(' /exact folder/ ');
   expect(sessionPathSections(value, 'missing')).toEqual([]);
+});
+
+describe('the rows of `session-paths`, which has no Topic', () => {
+  const { in_this_topic: _, ...ranked } = row;
+  const visited = { ...ranked, kind: 'worktree', worktree: { path: '/work/project', branch: 'fix' },
+    also_in: [{ id: 't1', label: 'Fix login' }], last_visit: '2026-11-14T09:00:00Z' };
+
+  it('keeps the order of the Host, the last visit, and needs no in_this_topic', () => {
+    expect(parseSessionPathRows({ rows: [visited, ranked] })).toEqual([
+      { kind: 'worktree', name: 'project', label: 'Project', directory: '/work/project',
+        worktree: { path: '/work/project', branch: 'fix' }, alsoIn: [{ id: 't1', label: 'Fix login' }], lastVisit: '2026-11-14T09:00:00Z' },
+      { kind: 'session_path', name: 'project', label: 'Project', directory: '/work/project',
+        worktree: null, alsoIn: [], lastVisit: null },
+    ]);
+  });
+
+  it.each([
+    [{ ...ranked, last_visit: 3 }, 'rows[0].last_visit'],
+    [{ ...ranked, last_visit: undefined }, 'rows[0].last_visit'],
+    [{ ...ranked, directory: null }, 'rows[0].directory'],
+  ])('rejects a malformed used field', (value, path) => {
+    expect(() => parseSessionPathRows({ rows: [value] })).toThrow(path);
+  });
+
+  it('writes the rows so that the same parse reads them back', () => {
+    const rows = parseSessionPathRows({ rows: [visited, ranked] });
+    expect(parseSessionPathRows(JSON.parse(JSON.stringify(sessionPathRowsJson(rows))))).toEqual(rows);
+  });
 });

@@ -10,14 +10,20 @@ import {
   chordFor,
   KEYBOARD_ACTION_TITLES,
   KEYBOARD_ACTIONS,
+  LIST_KEY_CHORDS,
+  LIST_KEY_TITLES,
+  LIST_KEYS,
   type KeyboardAction,
   type KeyChord,
+  type ListKey,
   type RecordedKey,
 } from './keyboard-shortcuts';
 
 interface NativeKeyCommand extends KeyChord {
-  id: KeyboardAction;
+  id: KeyboardAction | ListKey;
   title: string;
+  /** False only for a List Key. */
+  command: boolean;
 }
 
 interface KeyCommandsModule {
@@ -37,7 +43,9 @@ if (Platform.OS === 'ios' && !keyCommands) {
 
 const say = speakingAs(deviceLog(), 'keyboard');
 
-export type KeyboardHandlers = Partial<Record<KeyboardAction, () => void>>;
+export type KeyboardHandlers = Partial<Record<KeyboardAction | ListKey, () => void>>;
+
+const HANDLED_KEYS: readonly (KeyboardAction | ListKey)[] = [...KEYBOARD_ACTIONS, ...LIST_KEYS];
 
 interface Registration {
   current: KeyboardHandlers;
@@ -58,7 +66,8 @@ const KeyCommandsContext = createContext<KeyCommandsContextValue | null>(null);
  * whether a chord is a Keyboard Shortcut. Only the handled ones go to it, so
  * a chord nobody handles still reaches the Pane, and holding ⌘ on an iPad
  * lists what works on this screen. When two screens handle one action, the
- * one registered last runs.
+ * one registered last runs. The List Keys go to it the same way, with no ⌘,
+ * for as long as a list handles them.
  */
 export function KeyCommandsProvider({ children }: { children: React.ReactNode }) {
   const { settings } = useSettings();
@@ -74,7 +83,7 @@ export function KeyCommandsProvider({ children }: { children: React.ReactNode })
     };
   }, []);
 
-  const run = useCallback((action: KeyboardAction) => {
+  const run = useCallback((action: KeyboardAction | ListKey) => {
     const handler = registrations.current.findLast((each) => each.current[action])?.current[action];
     say(`keyboard shortcut ${action}${handler ? '' : ' has no handler'}`);
     handler?.();
@@ -83,7 +92,7 @@ export function KeyCommandsProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!keyCommands) return;
     const subscription = keyCommands.addListener('onCommand', ({ id }) => {
-      const action = KEYBOARD_ACTIONS.find((each) => each === id);
+      const action = HANDLED_KEYS.find((each) => each === id);
       if (action !== undefined) run(action);
     });
     return () => subscription.remove();
@@ -91,13 +100,17 @@ export function KeyCommandsProvider({ children }: { children: React.ReactNode })
 
   const shortcuts = settings.keyboardShortcuts;
   useEffect(() => {
-    const handled = KEYBOARD_ACTIONS.filter((action) =>
-      registrations.current.some((each) => each.current[action] !== undefined));
-    keyCommands?.setCommands(handled.map((action) => ({
-      id: action,
-      title: KEYBOARD_ACTION_TITLES[action],
-      ...chordFor(shortcuts, action),
-    })));
+    const handled = <K extends KeyboardAction | ListKey>(keys: readonly K[]) =>
+      keys.filter((key) => registrations.current.some((each) => each.current[key] !== undefined));
+    keyCommands?.setCommands([
+      ...handled(KEYBOARD_ACTIONS).map((action) => ({
+        id: action,
+        title: KEYBOARD_ACTION_TITLES[action],
+        command: true,
+        ...chordFor(shortcuts, action),
+      })),
+      ...handled(LIST_KEYS).map((key) => ({ id: key, title: LIST_KEY_TITLES[key], command: false, ...LIST_KEY_CHORDS[key] })),
+    ]);
   }, [revision, shortcuts]);
 
   const value = useMemo(() => ({ register }), [register]);
@@ -111,7 +124,7 @@ function useRegistration(handlers: KeyboardHandlers): [Registration, string] {
   });
   // Which actions are handled, so a new handler for the same actions does not
   // register again on every render.
-  const actions = KEYBOARD_ACTIONS.filter((action) => handlers[action] !== undefined).join(' ');
+  const actions = HANDLED_KEYS.filter((action) => handlers[action] !== undefined).join(' ');
   return [handlersRef, actions];
 }
 

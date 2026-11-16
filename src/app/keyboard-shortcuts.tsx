@@ -25,6 +25,9 @@ import {
   chordLabel,
   KEYBOARD_ACTION_TITLES,
   KEYBOARD_ACTIONS,
+  LIST_KEY_TITLES,
+  LIST_KEYS,
+  listKeyLabel,
   rebind,
   type KeyboardAction,
   type RecordedKey,
@@ -117,6 +120,23 @@ export default function KeyboardShortcutsScreen() {
                 </Button>
               );
             })}
+          </Section>
+
+          <Section
+            header={<SectionHeader palette={palette}>In Go to and Add a Session</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                These keys work while the list has the keys. You cannot change them.
+              </Text>
+            }
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            {LIST_KEYS.map((key) => (
+              <HStack key={key} modifiers={[accessibilityLabel(`${LIST_KEY_TITLES[key]}, ${listKeyLabel(key)}`)]}>
+                <Text>{LIST_KEY_TITLES[key]}</Text>
+                <Spacer />
+                <Text modifiers={[monospacedDigit(), foregroundColor(palette.secondaryLabel)]}>{listKeyLabel(key)}</Text>
+              </HStack>
+            ))}
           </Section>
 
           {shortcuts !== undefined && (

@@ -201,7 +201,7 @@ it('checks a write the Host did not answer, and opens the new Session of the Top
 
 describe('on a Host CLI that takes a Request id', () => {
   const topics = (sessions: { name: string; topic: string }[]) => ({
-    kind: 'listed', capabilities: ['request'], snapshot: { sessions },
+    kind: 'listed', snapshot: { capabilities: ['request'], sessions },
   });
   const mockShow = jest.fn();
   beforeEach(() => {

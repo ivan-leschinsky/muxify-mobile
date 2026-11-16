@@ -77,6 +77,7 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
+import { requestGoTo } from '@/keyboard/go-to-request';
 import { performChord, useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, Paste } from '@/tmux/attach';
@@ -1094,6 +1095,7 @@ export default function TerminalScreen() {
   }, []);
 
   useScreenKeyboardShortcuts(useMemo(() => attach ? {
+    ...(hostId ? { 'go-to': () => { requestGoTo(hostId); goHost(); } } : {}),
     'split-right': () => runVerb('split the Pane', () => attach.split('right')),
     'split-down': () => runVerb('split the Pane', () => attach.split('down')),
     'pane-left': () => attach.selectPaneToward('left'),
@@ -1103,7 +1105,7 @@ export default function TerminalScreen() {
     'clear-pane': clearPane,
     // ⌘C is the system's Copy wherever a text has the keys.
     ...(inputElsewhere ? {} : { 'copy-pane': copyPaneText }),
-  } : {}, [attach, runVerb, clearPane, copyPaneText, inputElsewhere]));
+  } : {}, [attach, hostId, goHost, runVerb, clearPane, copyPaneText, inputElsewhere]));
 
   /**
    * The ⋯ menu, in the spec's order. Each entry is said to the Log as it is
@@ -1200,7 +1202,7 @@ export default function TerminalScreen() {
       { kind: 'divider', id: 'divider' },
       action('configure-chooser', 'Configure chooser', 'list.bullet', () => {
         closeChooser();
-        if (hostId) router.push({ pathname: '/host-lists', params: { hostId } });
+        if (hostId) router.push({ pathname: '/chooser-lists', params: { hostId } });
       }),
       action('copy-log', 'Copy log', 'doc.text', copyLog),
       action('disconnect', 'Disconnect', 'xmark.circle', disconnect, { destructive: true }),

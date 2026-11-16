@@ -185,3 +185,27 @@ it('keeps optional Window seeds and tolerates new marks', () => {
   input.sessions[0].windows = [{ id: '@8', index: 2, name: 'editor', active: 'yes', mark: null }];
   expect(() => parseEnvironment(input)).toThrow('sessions[0].windows[0].active');
 });
+
+describe('what the Host CLI says past the Topics', () => {
+  it('has no capability and no sidebar from a Host CLI that says neither', () => {
+    expect(parseEnvironment(snapshotWith({}))).toMatchObject({ capabilities: [], sidebar: null });
+  });
+
+  it('keeps the capabilities that are names', () => {
+    expect(parseEnvironment(snapshotWith({ capabilities: ['request', 7, 'session-paths'] })).capabilities)
+      .toEqual(['request', 'session-paths']);
+  });
+
+  it('reads which views the Config shows in the Sidebar', () => {
+    expect(parseEnvironment(snapshotWith({ sidebar: { topics: true, sessions: false } })).sidebar)
+      .toEqual({ topics: true, sessions: false });
+  });
+
+  it.each([
+    [{ topics: 'yes', sessions: true }, 'sidebar.topics'],
+    [{ topics: true }, 'sidebar.sessions'],
+    [null, 'sidebar: expected an object'],
+  ])('refuses a sidebar it cannot read, with the path', (sidebar, path) => {
+    expect(() => parseEnvironment(snapshotWith({ sidebar }))).toThrow(path);
+  });
+});

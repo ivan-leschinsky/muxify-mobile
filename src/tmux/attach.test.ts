@@ -367,7 +367,6 @@ function fakeStore() {
       wrote.push(`session ${hostId} ${name}`);
       return Promise.resolve();
     },
-    forgetSession: () => Promise.resolve(),
     recentSessionsFor: () => Promise.resolve([]),
     rememberLastPlace: ({ hostId, session, topicId }) => {
       wrote.push(`last place ${hostId} ${session} ${topicId ?? 'no Topic'}`);

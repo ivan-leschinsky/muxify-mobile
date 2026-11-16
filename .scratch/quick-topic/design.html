@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Muxify Mobile: Topics and Sessions tabs, Go to and New Topic</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --surface: #ffffff; --sep: #c6c6c8; --label: #000; --sec: #6c6c70; --dim: #8e8e93;
+    --accent: #007aff; --green: #34c759; --warn: #c27c00; --red: #d70015; --well: #e5e5ea;
+    --page: #eceef3; --ink: #1b1f27; --muted: #5b6270; --card: #ffffff; --line: #d9dce3; --hl: #fff4c2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #262b36; --surface: #363b47; --sep: #484d58; --label: #e8edfa; --sec: #b8bdcc; --dim: #9aa1b2;
+      --accent: #63a3ff; --green: #30d158; --warn: #f2b84b; --red: #ff6b6b; --well: #2e333e;
+      --page: #1a1d24; --ink: #e6e9f0; --muted: #a0a7b6; --card: #22262f; --line: #353a45; --hl: #4a4220;
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 21px; margin: 44px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 18px 0 6px; }
+  p, li { max-width: 78ch; }
+  code { font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; background: var(--well); padding: 1px 5px; border-radius: 5px; overflow-wrap: anywhere; }
+  .lede { color: var(--muted); font-size: 16px; margin: 0 0 20px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+  .grid2 > *, .row > * { min-width: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .card h3 { margin-top: 0; }
+  .card ul { padding-left: 18px; margin: 6px 0; }
+  .ref { color: var(--muted); font-size: 12.5px; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--well); color: var(--muted); margin-right: 4px; }
+  .tag.rec { background: var(--accent); color: #fff; }
+  .tag.gap { background: var(--red); color: #fff; }
+  .callout { border-left: 4px solid var(--accent); background: var(--card); padding: 12px 16px; border-radius: 0 12px 12px 0; margin: 14px 0; }
+  .callout.warn { border-color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; }
+  .wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+
+  /* Flow strip */
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+  .step { background: var(--well); border-radius: 8px; padding: 4px 10px; font-size: 13.5px; }
+  .step.tap { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .step.type { outline: 2px dashed var(--warn); outline-offset: -2px; }
+  .step.wait { color: var(--dim); font-style: italic; background: transparent; }
+  .arrow { color: var(--dim); }
+  .count { font-weight: 700; margin-left: 8px; }
+
+  /* Phone mocks */
+  .screens { display: flex; flex-wrap: wrap; gap: 22px; margin: 14px 0 6px; }
+  .shot { width: 272px; flex: 0 0 auto; }
+  .shot figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .shot figcaption b { color: var(--ink); }
+  .phone { width: 272px; height: 560px; border-radius: 38px; border: 9px solid #111; background: var(--bg); color: var(--label); overflow: hidden; position: relative; font-size: 13px; line-height: 1.3; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+  .island { width: 84px; height: 22px; background: #111; border-radius: 12px; margin: 7px auto 0; }
+  .nav { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px 2px; }
+  .nav .glass { width: 30px; height: 30px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; color: var(--label); font-size: 15px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .nav .glass.hot { outline: 2.5px solid var(--accent); outline-offset: 1px; color: var(--accent); }
+  .nav .pair { display: flex; gap: 6px; }
+  .big { font-size: 24px; font-weight: 700; padding: 2px 14px 6px; }
+  .sh { font-size: 11px; text-transform: uppercase; color: var(--sec); padding: 10px 18px 4px; letter-spacing: .02em; }
+  .group { background: var(--surface); margin: 0 10px; border-radius: 11px; overflow: hidden; }
+  .r { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: .5px solid var(--sep); min-height: 38px; }
+  .r:last-child { border-bottom: 0; }
+  .r .t { flex: 1; min-width: 0; }
+  .r .t div:first-child { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r .s { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r .ic { width: 18px; text-align: center; color: var(--dim); flex: 0 0 18px; }
+  .r .chev { color: var(--dim); }
+  .r.new { background: var(--hl); }
+  .r.sel { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+  .pill { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--well); color: var(--sec); white-space: nowrap; }
+  .pill.go { background: var(--accent); color: #fff; }
+  .dashed { border: 1.5px dashed var(--sep); border-radius: 9px; margin: 6px 10px; padding: 8px 12px; color: var(--dim); font-size: 12px; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; top: 46px; background: var(--surface); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 22px rgba(0,0,0,.2); }
+  .sheet.half { top: 230px; }
+  .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--sep); margin: 6px auto 4px; }
+  .sheethead { display: flex; justify-content: space-between; align-items: center; padding: 2px 14px 6px; font-weight: 600; }
+  .sheethead span:first-child, .sheethead span:last-child { color: var(--accent); font-weight: 400; font-size: 12.5px; }
+  .search { margin: 4px 12px 6px; background: var(--well); border-radius: 9px; padding: 7px 10px; color: var(--label); font-size: 13px; }
+  .search .ph { color: var(--dim); }
+  .caret { display: inline-block; width: 1.5px; height: 14px; background: var(--accent); vertical-align: -2px; margin-left: 1px; }
+  .seg { display: flex; margin: 2px 12px 6px; background: var(--well); border-radius: 8px; padding: 2px; font-size: 11.5px; }
+  .seg span { flex: 1; text-align: center; padding: 4px 0; border-radius: 6px; color: var(--sec); }
+  .seg span.on { background: var(--surface); color: var(--label); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .sheet .group { margin: 0; border-radius: 0; background: transparent; }
+  .sheet .r { padding: 7px 14px; }
+  .kb { position: absolute; left: 0; right: 0; bottom: 0; height: 150px; background: color-mix(in srgb, var(--well) 85%, #888 15%); display: grid; grid-template-rows: repeat(4, 1fr); gap: 5px; padding: 8px 4px; }
+  .kb div { display: flex; gap: 4px; justify-content: center; }
+  .kb i { flex: 0 0 21px; height: 100%; background: var(--surface); border-radius: 5px; }
+  .kb i.w { flex: 0 0 120px; } .kb i.ret { flex: 0 0 58px; background: var(--accent); }
+  .menu { position: absolute; right: 10px; top: 96px; width: 200px; background: var(--surface); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.28); overflow: hidden; z-index: 3; }
+  .menu .r { font-size: 12.5px; min-height: 32px; padding: 6px 12px; }
+  .menu .r.hot { color: var(--accent); font-weight: 600; }
+  .dim-under::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.18); z-index: 2; }
+  .term { position: absolute; inset: 46px 0 0 0; background: #1e1f29; color: #d8dee9; font: 11px/1.45 ui-monospace, Menlo, monospace; padding: 34px 10px; }
+  .thead { position: absolute; left: 0; right: 0; top: 40px; display: flex; justify-content: center; align-items: center; gap: 4px; color: #e8edfa; font-size: 12.5px; font-weight: 600; z-index: 1; }
+  .toast { position: absolute; left: 14px; right: 14px; top: 58px; background: var(--surface); color: var(--label); border-radius: 12px; padding: 8px 12px; font-size: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.3); z-index: 3; }
+  .banner { margin: 6px 12px; padding: 6px 10px; border-radius: 8px; font-size: 11.5px; background: color-mix(in srgb, var(--warn) 20%, var(--surface)); color: var(--label); }
+  .hint { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; font-size: 10.5px; color: var(--dim); }
+  .ipad { width: 420px; height: 300px; border-radius: 22px; }
+  .ipad .sheet { left: 60px; right: 60px; top: 30px; bottom: 30px; border-radius: 14px; }
+  .kbd { font: 600 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: var(--card); }
+.gbar { position: absolute; left: 10px; right: 10px; bottom: 14px; display: flex; gap: 8px; align-items: center; z-index: 4; }
+  .gpill, .gbtn { background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(14px) saturate(1.6); -webkit-backdrop-filter: blur(14px) saturate(1.6); border: .5px solid color-mix(in srgb, var(--label) 18%, transparent); box-shadow: 0 4px 16px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.35); color: var(--label); }
+  .gpill { flex: 1; height: 40px; border-radius: 20px; display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 13px; }
+  .gpill .ph { color: var(--dim); }
+  .gbtn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-size: 19px; color: var(--accent); flex: 0 0 40px; }
+  .gbar.up { bottom: 158px; }
+  .gmenu { position: absolute; right: 12px; bottom: 64px; width: 190px; border-radius: 14px; overflow: hidden; z-index: 5; }
+  .gmenu .r { font-size: 12.5px; min-height: 34px; padding: 7px 12px; background: transparent; }
+  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 80px; background: linear-gradient(transparent, var(--bg)); z-index: 3; }
+
+</style>
+</head>
+<body>
+<main>
+<h1>Muxify Mobile: Topics and Sessions tabs, Go to and New Topic</h1>
+<p class="lede">What we build, so that the phone starts a Topic from a Session Path and opens a Session as fast as the Mac does. Mock screens use the phone's colours from <code>src/constants/app-theme.ts</code>.</p>
+
+<div class="callout">
+  <b>Four parts.</b> (1) The Host Screen gets the Mac's <b>Topics</b> and <b>Sessions</b> tabs. (2) In the Topics tab, the card you are in shows under a closed <b>Bench</b> row, as on the Mac. (3) A <b>Liquid Glass bar</b> at the bottom holds the <b>Go to</b> field and a <b>＋</b> menu. (4) <b>New Topic</b> follows the Mac: title, then a Session Path. The Host CLI gets one new verb, <code>session-paths</code> with no Topic, and three small additions.
+</div>
+
+<!-- ============================================================ -->
+<h2>1. Host Screen: Topics and Sessions tabs</h2>
+<p>The same two views as the Mac's Sidebar (<span class="ref">muxify docs/configuration.md:1692, :1720-1730</span>). They replace the stacked lists of Configure panels.</p>
+
+<div class="screens">
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="nav"><span class="glass">‹</span><span class="glass">⋯</span></div>
+      <div class="big">mac-studio</div>
+      <div class="seg" style="margin:0 12px 4px"><span class="on">Topics</span><span>Sessions</span></div>
+      <div class="sh">In Play</div>
+      <div class="group">
+        <div class="r"><span class="ic">▣</span><div class="t"><div>Fix reward drop bug in GS</div><div class="s">2 Sessions</div></div></div>
+        <div class="r"><span class="ic">▣</span><div class="t"><div>Mobile: Composer paste</div><div class="s">1 Session</div></div></div>
+      </div>
+      <div class="dashed">Open Place</div>
+      <div class="group">
+        <div class="r"><span class="ic">≡</span><div class="t"><div>Bench</div></div><span class="chev">›</span></div>
+        <div class="r new"><span class="ic">▣</span><div class="t"><div>Quick topic on mobile</div><div class="s">1 Session · you are here</div></div></div>
+      </div>
+      <div class="group" style="margin-top:8px"><div class="r"><span class="ic">≡</span><div class="t"><div>No Topic</div></div><span class="pill">3</span><span class="chev">›</span></div></div>
+      <div class="fade"></div>
+      <div class="gbar"><div class="gpill">⌕ <span class="ph">Go to</span></div><div class="gbtn">＋</div></div>
+    </div>
+    <figcaption><b>Topics tab.</b> Pinned, In Play, Guests, the Bench row, No Topic: the Mac's order. The Topic you are in shows under the closed Bench row.</figcaption>
+  </figure>
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="nav"><span class="glass">‹</span><span class="glass">⋯</span></div>
+      <div class="big">mac-studio</div>
+      <div class="seg" style="margin:0 12px 4px"><span>Topics</span><span class="on">Sessions</span></div>
+      <div class="group" style="margin-top:8px">
+        <div class="r"><span class="ic">▢</span><div class="t"><div>gs-backend</div><div class="s">No Topic · 1 Window</div></div><span class="chev">›</span></div>
+        <div class="r"><span class="ic">▢</span><div class="t"><div>gs-backend/reward-drop</div><div class="s">Fix reward drop bug in GS · 3 Windows</div></div><span class="chev">›</span></div>
+        <div class="r"><span class="ic">▢</span><div class="t"><div>muxify-mobile/composer-paste</div><div class="s">Mobile: Composer paste · 2 Windows</div></div><span class="chev">›</span></div>
+        <div class="r new"><span class="ic">▢</span><div class="t"><div>muxify-mobile/quick-topic-on-mobile</div><div class="s">Quick topic on mobile · you are here</div></div><span class="chev">›</span></div>
+        <div class="r"><span class="ic">▢</span><div class="t"><div>notes</div><div class="s">No Topic · 1 Window</div></div><span class="chev">›</span></div>
+      </div>
+      <div class="fade"></div>
+      <div class="gbar"><div class="gpill">⌕ <span class="ph">Go to</span></div><div class="gbtn">＋</div></div>
+    </div>
+    <figcaption><b>Sessions tab.</b> Every running Session in tmux order, with its Topic as the subtitle. No Bench. A tap opens the Session; the disclosure shows its Windows.</figcaption>
+  </figure>
+  <div class="card" style="flex:1;min-width:300px">
+    <h3>Rules</h3>
+    <ul>
+      <li>The Host's Config decides which tabs show: <code>sidebar.topics</code> and <code>sidebar.sessions</code>, read from <code>environment show</code>. One setting for the Mac and the phone. Configure panels goes.</li>
+      <li>A Host CLI with no Topics shows only the Sessions tab.</li>
+      <li>The phone remembers the last tab for each Host.</li>
+      <li>Switch with a tap on the tab, or ⌥⌘T on an iPad keyboard. No swipe: a horizontal swipe on a Topic card is its swipe action (<span class="ref">src/app/hosts/[id].tsx:254</span>).</li>
+      <li>Recent Sessions stops being a list. It ranks the Go to list before you type.</li>
+      <li>New Session and New Topic leave the Options menu. ＋ takes their place.</li>
+    </ul>
+    <h3>Bench peek</h3>
+    <ul>
+      <li>While the Bench row is closed, the card of the Attach's Topic shows under it. When the Attach's Session is in No Topic, that Session shows there. This is the Mac's rule (<span class="ref">Sources/Muxify/Topics/TopicsModel.swift:676-698</span>).</li>
+      <li>Today the phone hides every Bench card while the row is closed (<span class="ref">src/domain/host-screen.ts:303-307</span>).</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. The Liquid Glass bar and Go to</h2>
+<p>A native bottom toolbar on the Host Screen, in both tabs: <code>&lt;Stack.Toolbar placement="bottom"&gt;</code> with <code>Stack.Toolbar.SearchBarSlot</code> for the field from <code>&lt;Stack.SearchBar&gt;</code>, a <code>Spacer</code>, and a <code>Menu</code> for ＋. Expo Router 57.0.21 has all four. The search field in the bar needs iOS 26, which is the lowest iOS version the app supports.</p>
+
+<div class="screens">
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="nav"><span class="glass">‹</span><span class="glass">⋯</span></div>
+      <div class="big" style="font-size:17px;padding-top:6px">Go to</div>
+      <div class="group" style="margin-top:4px">
+        <div class="r"><span class="ic">■</span><div class="t"><div>gs-backend/reward-drop</div><div class="s">running · Fix reward drop bug in GS</div></div></div>
+        <div class="r sel"><span class="ic">□</span><div class="t"><div>gs-backend</div><div class="s">~/Dev/work/gs-backend · 2 h ago</div></div></div>
+        <div class="r"><span class="ic">⑂</span><div class="t"><div>gs-backend-analytics</div><div class="s">worktree · analytics</div></div></div>
+      </div>
+      <div class="gbar up"><div class="gpill">⌕ gs<span class="caret"></span></div><div class="gbtn" style="color:var(--label)">✕</div></div>
+      <div class="kb"><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i class="w"></i><i class="ret"></i></div></div>
+    </div>
+    <figcaption><b>Go to.</b> Tap the field: it moves up with the keyboard, and the Go to list replaces the tab. ✕ goes back to the tab.</figcaption>
+  </figure>
+  <figure class="shot">
+    <div class="phone dim-under">
+      <div class="island"></div>
+      <div class="nav"><span class="glass">‹</span><span class="glass">⋯</span></div>
+      <div class="big">mac-studio</div>
+      <div class="seg" style="margin:0 12px 4px"><span class="on">Topics</span><span>Sessions</span></div>
+      <div class="sh">In Play</div>
+      <div class="group"><div class="r"><span class="ic">▣</span><div class="t"><div>Fix reward drop bug in GS</div><div class="s">2 Sessions</div></div></div></div>
+      <div class="gmenu gpill" style="display:block;height:auto;padding:0;flex:none">
+        <div class="r">New Topic <span style="margin-left:auto;color:var(--dim)">⌘N</span></div>
+        <div class="r">New Session at a folder</div>
+      </div>
+      <div class="gbar"><div class="gpill">⌕ <span class="ph">Go to</span></div><div class="gbtn">＋</div></div>
+    </div>
+    <figcaption><b>＋ menu.</b> New Topic (section 3), or New Session at a folder: the Go to list with Session Paths only, which makes a Session in No Topic.</figcaption>
+  </figure>
+  <div class="card" style="flex:1;min-width:300px">
+    <h3>The Go to list</h3>
+    <ul>
+      <li>One list, as on the Mac (ADR 0045): running Sessions (■) with their Topic, Session Paths (□), Worktrees (⑂). A typed path (leading <code>~</code>) is the last row.</li>
+      <li>Ranking: the Host ranks it with <code>--query</code>, with the Mac's fuzzy match and last visit. With an empty field: last visit.</li>
+      <li>Running Sessions come from the phone's tmux Listing joined with <code>environment show</code>.</li>
+    </ul>
+    <h3>A tap on a row</h3>
+    <ul>
+      <li><b>Running Session:</b> the Attach switches to it, with the Title Sheet rules for Topic membership.</li>
+      <li><b>Session Path:</b> go to its No Topic Session, or make one there with <code>session new &lt;dir&gt; --name …</code>, as ↩ in Go to… on the Mac (<span class="ref">WorkspaceStore.swift:190-194</span>).</li>
+      <li><b>Long press on a Session Path:</b> “New Session here” makes another one with a <code>+2</code> name, as ⌘↩ on the Mac.</li>
+    </ul>
+    <h3>Where the bar is not</h3>
+    <ul>
+      <li>Home, which has no Host. The Terminal, where the Key Row and the keyboard are at the bottom.</li>
+      <li>Edit mode and the Fill Place sheet hide it.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. New Topic</h2>
+<p>The Mac's ⌘N, in one sheet: title, then a Session Path.</p>
+<div class="flow"><span class="step tap">＋ → New Topic</span><span class="arrow">→</span><span class="step type">title</span><span class="arrow">→</span><span class="step tap">↩</span><span class="arrow">→</span><span class="step type">“mob”</span><span class="arrow">→</span><span class="step tap">tap row</span><span class="count">Session open, Topic on top of the Bench</span></div>
+
+<div class="screens">
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="sheet half">
+        <div class="grab"></div>
+        <div class="sheethead"><span>Cancel</span><span>New Topic</span><span>↩</span></div>
+        <div class="search">Quick topic on mobile<span class="caret"></span></div>
+        <div class="flow" style="padding:0 12px"><span class="pill">backend</span><span class="pill">mobile</span></div>
+        <div class="kb"><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i class="w"></i><i class="ret"></i></div></div>
+      </div>
+    </div>
+    <figcaption><b>Step 1.</b> Title and Tags. Return sends <code>topic new</code>. The Host puts the Topic at the top of the Bench.</figcaption>
+  </figure>
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sheethead"><span>Add later</span><span>Quick topic on mobile</span><span></span></div>
+        <div class="search">mob<span class="caret"></span></div>
+        <div class="group">
+          <div class="r sel"><span class="ic">□</span><div class="t"><div>muxify-mobile</div><div class="s">~/Dev/personal/muxify-mobile · 2 h ago</div></div><span class="pill">↩</span></div>
+          <div class="r"><span class="ic">⑂</span><div class="t"><div>muxify-mobile-start-a-topic</div><div class="s">worktree · start-a-topic</div></div></div>
+          <div class="r"><span class="ic">■</span><div class="t"><div>muxify-mobile/composer-paste</div><div class="s">running · move into this Topic</div></div></div>
+        </div>
+        <div class="kb"><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div><i class="w"></i><i class="ret"></i></div></div>
+      </div>
+    </div>
+    <figcaption><b>Step 2.</b> The same sheet becomes Add a Session. The list is already loaded and the keyboard stays up. A tap sends <code>topic add-session --name</code> and opens the Session.</figcaption>
+  </figure>
+  <figure class="shot">
+    <div class="phone">
+      <div class="island"></div>
+      <div class="thead">Quick topic on mobile ⌄</div>
+      <div class="term">~/Dev/personal/muxify-mobile ❯ <span class="caret" style="background:#d8dee9"></span></div>
+    </div>
+    <figcaption><b>Done.</b> The Session is open. Back on the Host Screen, the Topic is under the closed Bench row.</figcaption>
+  </figure>
+  <div class="card" style="flex:1;min-width:280px">
+    <h3>Rules</h3>
+    <ul>
+      <li>A tap on a running Session moves it into the Topic, as ↩ on a ■ row on the Mac.</li>
+      <li>Add later, or leaving the sheet, keeps the Empty Topic, as on the Mac.</li>
+      <li>Both writes carry a Request id, as today (ADR 0021). The Session name is <code>&lt;path&gt;/&lt;topic slug&gt;</code>, made by the Host.</li>
+      <li>This replaces today's New Topic → Save → Add a Session sheets (<span class="ref">src/app/topic-form.tsx</span>, <span class="ref">src/app/topic-add-session.tsx</span>).</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. iPad keyboard</h2>
+<div class="wrap"><table>
+  <thead><tr><th>Keys</th><th>Action</th><th>As on the Mac</th></tr></thead>
+  <tbody>
+    <tr><td><span class="kbd">⌘P</span></td><td>Go to, from the Host Screen or the Terminal</td><td>Go to…</td></tr>
+    <tr><td><span class="kbd">⌘N</span></td><td>New Topic</td><td>New Topic</td></tr>
+    <tr><td><span class="kbd">⌥⌘T</span></td><td>Switch between the Topics and Sessions tabs</td><td>toggle_sidebar_mode</td></tr>
+    <tr><td><span class="kbd">↑</span> <span class="kbd">↓</span> <span class="kbd">↩</span> <span class="kbd">Esc</span></td><td>Move, pick, close in Go to and Add a Session</td><td>Command Palette</td></tr>
+    <tr><td><span class="kbd">⌘↩</span></td><td>Another Session at the path (<code>+2</code>)</td><td>new_session</td></tr>
+    <tr><td><span class="kbd">⌥↩</span></td><td>In Add a Session: a new Worktree first</td><td>⌥W, toggle_new_worktree</td></tr>
+  </tbody>
+</table></div>
+<p class="ref">Through the key-commands module (ADR 0022), and listed in Keyboard Shortcuts.</p>
+
+<!-- ============================================================ -->
+<h2>5. Slow Host or no Connection</h2>
+<ul>
+  <li>The phone keeps the last path list for each Host and shows it at once. A new read replaces it in the background, with no jump under the finger.</li>
+  <li>The Host CLI answers from the Mac's cache (<code>~/.local/state/muxify/session-paths/&lt;env&gt;.json</code>) and then refreshes it, so a slow <code>git worktree list</code> does not hold the list.</li>
+  <li>No Connection: the list shows from the cache with “Connecting to mac-studio…”. A pick waits on screen and goes when the Connection is up. It never goes after you leave.</li>
+  <li>No answer: the same Request goes one more time. Then the Host Write is unsure, with Check (ADR 0020, 0021).</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>6. The work</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>Host CLI (desktop repo)</h3>
+    <ol>
+      <li><b><code>muxify session-paths [--query q] --json</code></b> with no target: Session Paths and Worktrees, the rows of <code>topic session-paths</code> less <code>in_this_topic</code>, answered from the cache. Today the verb needs a Topic, Window or Pane (<span class="ref">CLIVerbs.swift:468-471</span>).</li>
+      <li><b>Last visit in <code>muxify.db</code></b>, moved from UserDefaults (<span class="ref">VisitLog.swift</span>). <code>--query</code> ranks with the Mac's <code>PickList</code>. A visit from the phone counts on the Mac.</li>
+      <li><b><code>sidebar.topics</code> and <code>sidebar.sessions</code></b> in the <code>environment show</code> answer, next to the Tags.</li>
+      <li><b>Capability name</b> <code>"session-paths"</code> next to <code>"request"</code> (<span class="ref">RequestInvocation.swift:687</span>).</li>
+      <li>Check that <code>session new</code> takes <code>--request</code>.</li>
+      <li><b>Mac New Topic refuses an empty title</b>, in place of “Untitled”.</li>
+    </ol>
+  </div>
+  <div class="card">
+    <h3>Phone</h3>
+    <ol>
+      <li>Topics and Sessions tabs on the Host Screen; Configure panels and the Options menu entries go.</li>
+      <li>Bench peek for the Attach's Topic or No Topic Session.</li>
+      <li>Bottom bar: Go to field and ＋ menu.</li>
+      <li>Go to list, ranking from the Host, cache per Host.</li>
+      <li>One New Topic sheet: title, then Add a Session.</li>
+      <li>New Session at a folder through <code>session new</code>.</li>
+      <li>⌘P, ⌘N, ⌥⌘T and the list keys.</li>
+      <li>On an old Host CLI: today's sheets.</li>
+      <li><code>CONTEXT.md</code>: Go to, the tabs, the Bench peek. New Session (a name, no folder) goes.</li>
+    </ol>
+  </div>
+</div>
+
+<h2>7. Decisions</h2>
+
+
+<div class="card" style="margin-bottom:18px">
+  <h3>Decided: the Terminal's chooser stays as it is</h3>
+  <p>The Title Sheet in the Terminal keeps its Windows / Sessions / Topics switch, as today. Only the Host Screen gets the two tabs.</p>
+</div>
+<div class="card" style="margin-bottom:18px">
+  <h3>Decided: an empty title is refused, on the phone and on the Mac</h3>
+  <p>The phone keeps its rule: Return does nothing until the title has text, and the field says “Give the Topic a title.” The Mac changes to match: New Topic (⌘N) with an empty title makes nothing, in place of an “Untitled” Topic (<span class="ref">PaletteFlow.swift:157</span>).</p>
+</div>
+<div class="card">
+  <h3>Decided: iOS 26 and later only</h3>
+  <p>The app supports iOS 26 and later only. So the search field always shows in the bottom bar, and there is no fallback ⌕ button.</p>
+</div>
+</main>
+
+</body>
+</html>

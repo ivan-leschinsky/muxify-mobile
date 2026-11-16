@@ -785,6 +785,110 @@ describe('Session Path choices', () => {
   });
 });
 
+describe('Session Paths with no Topic, for Go to', () => {
+  const rows = { rows: [{
+    kind: 'worktree', name: 'api-fix', label: 'api-fix', directory: '/work/api-fix',
+    worktree: { path: '/work/api-fix', branch: 'fix' }, also_in: [], last_visit: '2026-11-14T09:00:00Z',
+  }] };
+  const found = ['command -v', PATH_FOUND] as [string, Answer];
+
+  it('asks for the list by last visit with an empty field, and keeps the order of the answer', async () => {
+    const host = fakeHost([found, ['session-paths', { exitCode: 0, stdout: JSON.stringify(rows) }]]);
+
+    const read = await createMuxifyCli().rankedSessionPaths(host.exec, '  ');
+
+    expect(host.ran.at(-1)).toBe("'/opt/bin/muxify' session-paths --json");
+    expect(read).toEqual({ kind: 'listed', rows: [{
+      kind: 'worktree', name: 'api-fix', label: 'api-fix', directory: '/work/api-fix',
+      worktree: { path: '/work/api-fix', branch: 'fix' }, alsoIn: [], lastVisit: '2026-11-14T09:00:00Z',
+    }] });
+  });
+
+  it('gives the text of the field as one argument for the Host to rank by', async () => {
+    const host = scriptedHost(JSON.stringify({ rows: [] }));
+
+    await createMuxifyCli().rankedSessionPaths(host.exec, ` gs's api `);
+
+    expect(host.argv()).toEqual(['session-paths', '--query', `gs's api`, '--json']);
+  });
+
+  it('fails with the reason of the Host, and with the path of a row it cannot read', async () => {
+    const refused = fakeHost([found, ['session-paths', { exitCode: 1, stderr: 'no Config' }]]);
+    expect(await createMuxifyCli().rankedSessionPaths(refused.exec, '')).toEqual({ kind: 'failed', error: 'no Config' });
+
+    const odd = fakeHost([found, ['session-paths', { exitCode: 0, stdout: JSON.stringify({ rows: [{ ...rows.rows[0], last_visit: 3 }] }) }]]);
+    expect(await createMuxifyCli().rankedSessionPaths(odd.exec, '')).toMatchObject({
+      kind: 'failed', error: expect.stringContaining('rows[0].last_visit'),
+    });
+  });
+});
+
+describe('making a Session in no Topic', () => {
+  const MADE = JSON.stringify({ changed: { created: false, session: '$7', session_name: 'gs-backend+2', window: '@9' } });
+
+  it('gives the folder and the name as one argument each, and answers with the name the Host gave', async () => {
+    const host = scriptedHost(MADE);
+
+    const read = await createMuxifyCli().newSession(host.exec, `/Users/me/my "big" project`, 'gs-backend+2', REQUEST);
+
+    expect(host.argv()).toEqual(['session', 'new', `/Users/me/my "big" project`, '--name', 'gs-backend+2', '--json']);
+    expect(read).toEqual({ kind: 'added', session: 'gs-backend+2' });
+  });
+
+  it('has the shell of the Host expand a leading ~', async () => {
+    const host = scriptedHost(MADE);
+
+    await createMuxifyCli().newSession(host.exec, '~/Dev/gs backend', 'gs-backend', REQUEST);
+
+    expect(host.argv()[2]).toBe(`${process.env.HOME}/Dev/gs backend`);
+  });
+
+  it('sends the Request id, so that a second send makes no second Session', async () => {
+    const takesRequests: Answer = { exitCode: 0, stdout: JSON.stringify({ ...inPlay, capabilities: ['request'] }) };
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', takesRequests], ['session new', { exitCode: 0, stdout: MADE }]]);
+
+    await createMuxifyCli().newSession(host.exec, '/work/api', 'api', REQUEST);
+
+    expect(host.ran.at(-1)).toBe(`'/opt/bin/muxify' --request '${REQUEST}' session new '/work/api' --name 'api' --json`);
+  });
+
+  it('fails with the reason of the Host, which made nothing', async () => {
+    const failure = { failed: { kind: 'session_path_unavailable', message: 'No folder at /nope.' } };
+    const host = scriptedHost(JSON.stringify(failure), 1);
+
+    expect(await createMuxifyCli().newSession(host.exec, '/nope', 'nope', REQUEST)).toEqual({ kind: 'failed', error: 'No folder at /nope.' });
+  });
+});
+
+describe('adding a Session in a new Worktree', () => {
+  it('asks the Host for the Worktree, and sends no name: the Host names the branch from the Topic', async () => {
+    const topic = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+    const host = scriptedHost(JSON.stringify({ changed: { session_name: 'api-fix-login/fix-login', topic_id: topic } }));
+
+    const read = await createMuxifyCli().addWorktreeSession(host.exec, topic, '/work/api', REQUEST);
+
+    expect(host.argv()).toEqual(['topic', 'add-session', '/work/api', '--worktree', '--topic', topic, '--json']);
+    expect(read).toEqual({ kind: 'added', session: 'api-fix-login/fix-login' });
+  });
+});
+
+describe('recording a visit of a folder', () => {
+  it('names the folder as one argument', async () => {
+    const host = scriptedHost('{"visited":{"directory":"/Users/me/Dev/gs backend","last_visit":"2026-11-15T18:35:30Z"}}');
+
+    const read = await createMuxifyCli().visit(host.exec, '~/Dev/gs backend', REQUEST);
+
+    expect(host.argv()).toEqual(['session-paths', 'visit', `${process.env.HOME}/Dev/gs backend`, '--json']);
+    expect(read).toEqual({ kind: 'changed' });
+  });
+
+  it('fails with the reason of the Host', async () => {
+    const host = scriptedHost(JSON.stringify({ failed: { message: 'No folder at /nope.' } }), 1);
+
+    expect(await createMuxifyCli().visit(host.exec, '/nope', REQUEST)).toEqual({ kind: 'failed', error: 'No folder at /nope.' });
+  });
+});
+
 describe('a write with a Request id', () => {
   const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
   const CHANGED: Answer = { exitCode: 0, stdout: JSON.stringify({ changed: { topic_id: ID } }) };
@@ -813,7 +917,7 @@ describe('a write with a Request id', () => {
     const read = await cli.read(host.exec);
     await cli.reopenTopic(host.exec, ID, REQUEST);
 
-    expect(read).toMatchObject({ kind: 'listed', capabilities: ['request'] });
+    expect(read).toMatchObject({ kind: 'listed', snapshot: { capabilities: ['request'] } });
     expect(host.ran.filter((command) => command.includes('environment show'))).toHaveLength(1);
     expect(host.ran.at(-1)).toBe(`${MUXIFY} --request '${REQUEST}' topic reopen --topic '${ID}' --json`);
   });

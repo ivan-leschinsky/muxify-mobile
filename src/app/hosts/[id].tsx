@@ -1,32 +1,35 @@
-import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
+import type { SearchBarCommands } from 'react-native-screens';
 
 import {
   Button,
   Form,
   Host,
   HStack,
-  Image,
+  Picker,
   Section,
   Spacer,
   SwipeActions,
   Text,
+  VStack,
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
   background,
   buttonStyle,
   environment,
-  font,
-  foregroundColor,
-  frame,
   listRowBackground,
+  padding,
+  pickerStyle,
   scrollContentBackground,
+  tag,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
 import { FillPlaceSheet } from '@/components/fill-place-sheet';
+import { GoToList, type FolderRow } from '@/components/go-to-list';
 import {
   HostScreenRowView,
   rowKey,
@@ -34,26 +37,37 @@ import {
   type RowActions,
   type TopicRow,
 } from '@/components/host-screen-row-view';
-import { TAPPABLE_ROW } from '@/components/tappable-row';
+import { HostWriteRow } from '@/components/host-write-row';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
+import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
   firstReadAnswered,
   hostScreen,
+  hostScreenTabs,
+  runningSessions,
+  tabOnShow,
+  type HostScreenInput,
   type HostScreenRow,
-  type HostScreenSection,
+  type HostScreenTab,
   type OpenableRow,
 } from '@/domain/host-screen';
 import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
+import { useGoToPaths } from '@/hooks/use-go-to-paths';
+import { useGoToPick } from '@/hooks/use-go-to-pick';
+import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostReading } from '@/hooks/use-host-reading';
 import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
+import { takeGoToRequest } from '@/keyboard/go-to-request';
+import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
-import { useHostLists, useSettings } from '@/settings/settings-context';
+import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import { hostCreationOrder } from '@/settings/settings';
 import type { TopicId } from '@/topics/environment';
+import { lastSnapshot } from '@/topics/host-topics';
+import { SESSION_PATHS_CAPABILITY } from '@/topics/request';
 import {
   SWIPE_LABEL,
   swipeAction,
@@ -62,35 +76,26 @@ import {
   type TopicAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
-import { useHostEntry } from '@/hooks/use-host-entry';
+import { recordVisit } from '@/topics/visit';
 
-/** How many rows a section shows before it offers to show the rest. */
-const COLLAPSED = 3;
+const TAB_NAMES: Record<HostScreenTab, string> = { topics: 'Topics', sessions: 'Sessions' };
 
 /**
- * A Host and its Sessions.
+ * A Host: its Topics or its Sessions, as the Mac's Sidebar shows them, and
+ * Go to in the bar at the bottom.
  *
- * It draws the lists that hostScreen returns, in the order chosen for this Host.
- *
- * What is remembered is on screen before the Host is even dialled, and the
- * Host's own answer arrives underneath a moment later. A Host you cannot reach
- * is exactly when you most want to see what you had open on it.
+ * It draws the tab that hostScreen returns. While the Go to field has the
+ * keys, the Go to list stands in place of the tab.
  */
 export default function HostScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { settings, appearance, palette } = useSettings();
+  const { settings, appearance, palette, rememberHostScreenTab } = useSettings();
 
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const lists = useHostLists(id);
-  const topicsOn = lists.includes('topics');
-  const { listing, topics, read: readHost } = useHostReading(id, topicsOn);
-  const [expanded, setExpanded] = useState<ReadonlySet<HostScreenSection['id']>>(new Set());
-  // Frozen per visit: "2 hr ago" must not renumber itself under the user's
-  // thumb, and the screen is short-lived enough that it will not go stale.
-  const [openedAt] = useState(() => new Date());
+  const { listing, topics, read: readHost } = useHostReading(id, true);
   /** The Topic card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<TopicId | null>(null);
   /** The Open Place the user fills: tapped, until a Topic is picked or the sheet is closed. */
@@ -126,27 +131,79 @@ export default function HostScreen() {
     }, [readRecords, readHost]),
   );
 
-  const entered = useCallback(() => router.push('/terminal'), [router]);
+  const tabs = hostScreenTabs(topics);
+  const tab = tabOnShow(settings.hostScreenTabs?.[id], tabs);
+  const switchTab = () => rememberHostScreenTab(id, tabs[(tabs.indexOf(tab) + 1) % tabs.length]!);
+  // Without Go to, New Session and New Topic are in the Options menu.
+  const hasGoTo = lastSnapshot(topics)?.capabilities.includes(SESSION_PATHS_CAPABILITY) ?? false;
+
+  // Null while the Go to field does not have the keys.
+  const [goTo, setGoTo] = useState<GoToMode | null>(null);
+  const [query, setQuery] = useState('');
+  const [highlighted, setHighlighted] = useState(0);
+  const search = useRef<SearchBarCommands>(null);
+  // Frozen: "2 hr ago" must not change under the user's thumb.
+  const [listedAt] = useState(() => new Date());
+  const { paths, reading, ask } = useGoToPaths(id, hasGoTo, goTo !== null && query.trim() === '');
+  useFocusEffect(useCallback(() => {
+    if (hasGoTo) ask('');
+  }, [hasGoTo, ask]));
+
+  const closeGoTo = useCallback(() => {
+    search.current?.cancelSearch();
+    setGoTo(null);
+    setQuery('');
+    setHighlighted(0);
+  }, []);
+  const entered = useCallback(() => {
+    closeGoTo();
+    router.push('/terminal');
+  }, [closeGoTo, router]);
   const hostEntry = useHostEntry(id, entered);
+  const pick = useGoToPick(id, entered);
+
+  const sessions = useMemo(() => runningSessions(listing, topics) ?? [], [listing, topics]);
+  const rows = goTo === null ? [] : goToRows({
+    query,
+    mode: goTo,
+    sessions: sessions.map(({ name, topicLabel }) => ({ name, topicLabel: topicLabel ?? null })),
+    paths,
+    recent,
+  });
+  const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
+
+  const openFolder = (row: FolderRow, another: boolean) => {
+    const opening = pathOpening(row, sessions.map((session) => session.name), another || goTo === 'paths');
+    if (opening.kind === 'new') {
+      pick.make(opening);
+      return;
+    }
+    if (host) recordVisit(host, opening.directory);
+    hostEntry.openSession(opening.session);
+  };
+  const pickRow = (row: GoToRow | undefined, another = false) => {
+    if (row === undefined || pick.write.kind === 'running') return;
+    if (row.kind === 'session') hostEntry.openSession(row.name);
+    else openFolder(row, another);
+  };
 
   const disconnect = useCallback(() => {
     void holder.disconnect();
   }, [holder]);
 
-  const forget = useCallback(
-    (name: string) => {
-      void (async () => {
-        await deviceHostStore().forgetSession(id, name);
-        await readRecords();
-      })();
-    },
-    [id, readRecords],
-  );
+  const newTopic = () => router.push({ pathname: hasGoTo ? '/new-topic' : '/topic-form', params: { hostId: id } });
+  const newSessionAtFolder = () => {
+    setGoTo('paths');
+    search.current?.focus();
+  };
 
-  const newSession = () => router.push({ pathname: '/session-form', params: { hostId: id } });
-  const newTopic = () => router.push({ pathname: '/topic-form', params: { hostId: id } });
-
-  const input = { settings: { ...settings, hostScreenLists: lists }, recent, listing, topics, appearance };
+  const input: Omit<HostScreenInput, 'opened'> = {
+    tab,
+    listing,
+    topics,
+    attach: attachedHere === null ? null : { sessionName: attachedHere.sessionName, topic: attachedHere.topic?.id ?? null },
+    appearance,
+  };
   // A move opens the Bench: a card cannot go where the list hides it.
   const movingSections = moving === null ? [] : hostScreen({ ...input, opened: new Set([...opened, 'bench']) });
   // A Listing read during the move can drop the picked card, and the move ends with it.
@@ -157,9 +214,26 @@ export default function HostScreen() {
   const sections = targets === null ? hostScreen({ ...input, opened }) : movingSections;
   // The Benched Topics are choices even while the Bench row is closed. A Listing read while the sheet is open can fill the place, and the sheet closes with it.
   const choices = filling === null ? null : fillChoices(hostScreen({ ...input, opened: new Set([...opened, 'bench']) }), filling);
+  // The bar mounts again each time this screen comes back. The Go to field
+  // that expo-router puts back in the toolbar after a push and a pop no longer
+  // takes a tap, and a new field does.
+  const barShown = useIsFocused() && hasGoTo && targets === null && filling === null;
+  // ⌘P in the Terminal asks for Go to here, and the field takes it once the bar is back.
+  useEffect(() => {
+    if (barShown && takeGoToRequest(id)) search.current?.focus();
+  }, [barShown, id]);
 
-  const toggleExpanded = (section: HostScreenSection['id']) =>
-    setExpanded((shown) => toggled(shown, section));
+  useScreenKeyboardShortcuts({
+    ...(barShown ? { 'go-to': () => search.current?.focus(), 'new-topic': newTopic } : {}),
+    ...(tabs.length > 1 && goTo === null && targets === null ? { 'switch-tab': switchTab } : {}),
+    ...(goTo === null ? {} : {
+      'list-up': () => setHighlighted(Math.max(onShow - 1, 0)),
+      'list-down': () => setHighlighted(Math.min(onShow + 1, rows.length - 1)),
+      'list-pick': () => pickRow(rows[onShow]),
+      'list-close': closeGoTo,
+      'new-session-here': () => pickRow(rows[onShow], true),
+    }),
+  });
 
   const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
@@ -230,23 +304,14 @@ export default function HostScreen() {
   const renderRow = (row: HostScreenRow, index: number) => {
     const key = rowKey(row, index);
     if (targets !== null) {
-      return (
-        <HostScreenRowView
-          key={key}
-          row={row}
-          palette={palette}
-          openedAt={openedAt}
-          actions={movingActions}
-          move={moveRole(row)}
-        />
-      );
+      return <HostScreenRowView key={key} row={row} palette={palette} actions={movingActions} move={moveRole(row)} />;
     }
     if (row.kind === 'topic') {
       const swipe = swipeAction(row.mark);
       if (swipe !== null) {
         return (
           <SwipeActions key={key}>
-            <HostScreenRowView row={row} palette={palette} openedAt={openedAt} actions={actions} />
+            <HostScreenRowView row={row} palette={palette} actions={actions} />
             <SwipeActions.Actions allowsFullSwipe={swipe === 'mark-read'}>
               <Button
                 label={SWIPE_LABEL[swipe]}
@@ -259,56 +324,40 @@ export default function HostScreen() {
         );
       }
     }
-    if (row.kind !== 'recent') {
-      return (
-        <HostScreenRowView
-          key={key}
-          row={row}
-          palette={palette}
-          openedAt={openedAt}
-          actions={actions}
-        />
-      );
+    if (row.kind !== 'session' || attachedHere?.sessionName !== row.name) {
+      return <HostScreenRowView key={key} row={row} palette={palette} actions={actions} />;
     }
-    const attached = attachedHere?.sessionName === row.name;
     return (
       <SwipeActions key={key}>
-        <HostScreenRowView
-          row={row}
-          palette={palette}
-          openedAt={openedAt}
-          attached={attached ? attachedHere.phase : undefined}
-          actions={actions}
-        />
+        <HostScreenRowView row={row} palette={palette} attached={attachedHere.phase} actions={actions} />
         <SwipeActions.Actions>
-          {/* First, so a full swipe on the attached row ends the Connection:
-              on that row it is the verb being reached for, and Forget is the
-              odd one. Red because it ends something, unlike Forget beside it.
-              Here rather than in the row, where a red word sat beside the
-              phase and read as part of the status. */}
-          {attached ? (
-            <Button
-              label="Disconnect"
-              systemImage="bolt.slash"
-              role="destructive"
-              onPress={disconnect}
-              // Said outright, because the Form's own tint reaches in here and
-              // paints the role's red over in accent.
-              modifiers={[tint(palette.destructive), accessibilityLabel(`Disconnect ${row.name}`)]}
-            />
-          ) : null}
-          {/* Not destructive, and deliberately not red: this drops Muxify's
-              memory of the Session and leaves it running. */}
           <Button
-            label="Forget"
-            systemImage="minus.circle"
-            onPress={() => forget(row.name)}
-            modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
+            label="Disconnect"
+            systemImage="bolt.slash"
+            role="destructive"
+            onPress={disconnect}
+            // Said outright, because the Form's own tint reaches in here and
+            // paints the role's red over in accent.
+            modifiers={[tint(palette.destructive), accessibilityLabel(`Disconnect ${row.name}`)]}
           />
         </SwipeActions.Actions>
       </SwipeActions>
     );
   };
+
+  const changeQuery = useCallback((event: { nativeEvent: { text?: string } }) => {
+    const text = event.nativeEvent.text ?? '';
+    setQuery(text);
+    setHighlighted(0);
+    ask(text);
+  }, [ask]);
+  const fieldFocused = useCallback(() => setGoTo((mode) => mode ?? 'all'), []);
+  // Return on the software keyboard. A hardware Return is the List Key, which the app takes before the field.
+  const submit = useRef(() => {});
+  useEffect(() => {
+    submit.current = () => pickRow(rows[onShow]);
+  });
+  const fieldSubmitted = useCallback(() => submit.current(), []);
 
   return (
     <View style={styles.fill}>
@@ -326,98 +375,116 @@ export default function HostScreen() {
         )}
         <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="Host Options">
           <Stack.Toolbar.Label>Options</Stack.Toolbar.Label>
-          {hostCreationOrder(lists).map((kind) => <Stack.Toolbar.MenuAction
-            key={kind}
-            icon={kind === 'sessions' ? 'terminal' : 'folder.badge.plus'}
-            onPress={kind === 'sessions' ? newSession : newTopic}>
-            {kind === 'sessions' ? 'New Session' : 'New Topic'}
-          </Stack.Toolbar.MenuAction>)}
-          <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/host-lists', params: { hostId: id } })}>
-            Configure panels
+          <Stack.Toolbar.MenuAction
+            hidden={hasGoTo}
+            icon="terminal"
+            onPress={() => router.push({ pathname: '/session-form', params: { hostId: id } })}>
+            New Session
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction hidden={hasGoTo} icon="folder.badge.plus" onPress={newTopic}>
+            New Topic
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/chooser-lists', params: { hostId: id } })}>
+            Configure chooser
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
 
+      {barShown ? (
+        <>
+          <Stack.SearchBar
+            ref={search}
+            placeholder={goTo === 'paths' ? 'New Session at a folder' : 'Go to'}
+            autoCapitalize="none"
+            onFocus={fieldFocused}
+            onChangeText={changeQuery}
+            onSearchButtonPress={fieldSubmitted}
+            onCancelButtonPress={closeGoTo}
+          />
+          <Stack.Toolbar placement="bottom">
+            <Stack.Toolbar.SearchBarSlot />
+            <Stack.Toolbar.Spacer />
+            <Stack.Toolbar.Menu icon="plus" accessibilityLabel="New">
+              <Stack.Toolbar.MenuAction icon="folder.badge.plus" onPress={newTopic}>
+                New Topic
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction icon="terminal" onPress={newSessionAtFolder}>
+                New Session at a folder
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
+          </Stack.Toolbar>
+        </>
+      ) : null}
+
       <Host style={styles.fill} matchContents={false}>
-        <Form
+        <VStack
+          spacing={0}
           modifiers={[
             // See settings.tsx: SwiftUI follows the phone, not the app.
             environment('colorScheme', appearance),
-            scrollContentBackground('hidden'),
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
-          {!firstReadAnswered(input) ? (
-            <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-              {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
-            </Section>
-          ) : sections.map((section) => (
-            <Section
-              key={section.id}
-              header={
-                section.title === null ? undefined : (
-                  <SectionTitle
-                    title={section.title}
-                    palette={palette}
-                    target={targets?.headers.get(section.id)}
-                    onPress={(target) => picked !== undefined && sendMove(picked.id, target)}
-                  />
-                )
-              }
-              footer={
-                section.footer === null ? undefined : (
-                  <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
-                    {section.footer}
-                  </Text>
-                )
-              }
-              modifiers={[listRowBackground(palette.rowSurface)]}>
-              {(collapsible(section)
-                ? collapse(section.rows, expanded.has(section.id))
-                : section.rows
-              ).map(renderRow)}
-              {collapsible(section) && section.rows.length > COLLAPSED ? (
-                <DisclosureRow
+          {tabs.length > 1 && goTo === null && targets === null && firstReadAnswered(input) ? (
+            <Picker
+              selection={tab}
+              onSelectionChange={(next) => rememberHostScreenTab(id, next)}
+              modifiers={[pickerStyle('segmented'), accessibilityLabel('Host Screen view'), padding({ horizontal: 16, vertical: 8 })]}>
+              {tabs.map((each) => <Text key={each} modifiers={[tag(each)]}>{TAB_NAMES[each]}</Text>)}
+            </Picker>
+          ) : null}
+          <Form modifiers={[scrollContentBackground('hidden')]}>
+            {goTo !== null ? (
+              <>
+                <HostWriteRow
+                  write={pick.write}
+                  words={{
+                    host: pick.hostName,
+                    sending: `Creating ${pick.picked?.name ?? 'a Session'}`,
+                    attaching: pick.picked ? `Opening ${pick.picked.name}` : undefined,
+                    mayHaveHappened: 'The Session may exist.',
+                  }}
                   palette={palette}
-                  expanded={expanded.has(section.id)}
-                  onPress={() => toggleExpanded(section.id)}
+                  onRetry={pick.retry}
+                  onCheck={pick.check}
                 />
-              ) : null}
-            </Section>
-          ))}
-        </Form>
+                <GoToList
+                  rows={rows}
+                  highlighted={onShow}
+                  reading={reading}
+                  palette={palette}
+                  now={listedAt}
+                  locked={pick.write.kind === 'running'}
+                  onPick={pickRow}
+                  folderMenu={goTo === 'all' ? { label: 'New Session here', icon: 'plus', onPress: (row) => openFolder(row, true) } : undefined}
+                />
+              </>
+            ) : !firstReadAnswered(input) ? (
+              <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+                {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
+              </Section>
+            ) : sections.map((section) => (
+              <Section
+                key={section.id}
+                header={
+                  section.title === null ? undefined : (
+                    <SectionTitle
+                      title={section.title}
+                      palette={palette}
+                      target={targets?.headers.get(section.id)}
+                      onPress={(target) => picked !== undefined && sendMove(picked.id, target)}
+                    />
+                  )
+                }
+                modifiers={[listRowBackground(palette.rowSurface)]}>
+                {section.rows.map(renderRow)}
+              </Section>
+            ))}
+          </Form>
+        </VStack>
       </Host>
       <FillPlaceSheet choices={choices} onPick={fillPlace} onDismiss={() => setFilling(null)} />
     </View>
-  );
-}
-
-
-/** The row at the foot of a section that has more to show. */
-function DisclosureRow({
-  palette,
-  expanded,
-  onPress,
-}: {
-  palette: Appearance;
-  expanded: boolean;
-  onPress: () => void;
-}) {
-  const label = expanded ? 'Show fewer' : 'Show more';
-  return (
-    <Button
-      onPress={onPress}
-      modifiers={[buttonStyle('plain'), accessibilityLabel(label)]}>
-      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-        <Image
-          systemName={expanded ? 'chevron.up' : 'chevron.down'}
-          size={15}
-          color={palette.controlAccent}
-        />
-        <Text modifiers={[font({ size: 17 }), foregroundColor(palette.controlAccent)]}>{label}</Text>
-        <Spacer />
-      </HStack>
-    </Button>
   );
 }
 
@@ -446,15 +513,6 @@ function SectionTitle({
       />
     </HStack>
   );
-}
-
-/** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */
-function collapsible(section: HostScreenSection): boolean {
-  return section.id === 'recent' || section.id === 'sessions';
-}
-
-function collapse<T>(items: T[], expanded: boolean): T[] {
-  return expanded ? items : items.slice(0, COLLAPSED);
 }
 
 const styles = StyleSheet.create({

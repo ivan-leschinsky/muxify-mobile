@@ -17,18 +17,10 @@ APP=dev.muxify.app
 TITLE="e2e Add Session"
 DIR="/tmp/muxify e2e add"
 SESSION="muxifye2eadd/e2e-add-session"
-SETTINGS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-settings.json"
 
 trap 'rmdir "$DIR" 2>/dev/null' EXIT
 
-python3 - "$SETTINGS" <<'PY'
-import json, sys
-path = sys.argv[1]
-settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
-json.dump(settings, open(path, "w"))
-PY
+bash "$(dirname "$0")/topics-tab.sh" || exit 1
 
 mkdir -p "$DIR"
 id=$(muxify topic new "$TITLE" --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])') || exit 1

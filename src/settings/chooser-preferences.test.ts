@@ -1,10 +1,8 @@
-import { chooserListsFor, DEFAULT_SETTINGS, hiddenChooserLists, hostCreationOrder, hostListsFor, moveChooserLists, parseSettings, switchChooserList } from './settings';
+import { chooserListsFor, DEFAULT_SETTINGS, hiddenChooserLists, moveChooserLists, parseSettings, switchChooserList } from './settings';
 import { createSettingsStore } from './settings-store';
 
-it('defaults to Windows without changing Host panels', () => {
-  const settings = parseSettings({ hostScreenLists: ['topics', 'recent'] });
-  expect(chooserListsFor(settings, 'first')).toEqual(['windows']);
-  expect(hostListsFor(settings, 'first')).toEqual(['topics', 'recent']);
+it('defaults to Windows', () => {
+  expect(chooserListsFor(parseSettings({}), 'first')).toEqual(['windows']);
 });
 
 it('keeps known chooser lists once and retains their order', () => {
@@ -14,16 +12,15 @@ it('keeps known chooser lists once and retains their order', () => {
   expect(chooserListsFor(settings, 'constructor')).toEqual(['windows']);
 });
 
-it('retains independent choices for both views and Hosts after restart', async () => {
+it('retains independent choices for each Host after restart', async () => {
   let contents = JSON.stringify(DEFAULT_SETTINGS);
   const file = { read: async () => contents, write: async (next: string) => { contents = next; } };
   const store = createSettingsStore(file);
-  const settings = await store.load(['first', 'second']);
+  const settings = await store.load();
   await store.save({ ...settings, chooserListPreferences: { first: ['sessions', 'windows'], second: ['topics'] } });
-  const restarted = await createSettingsStore(file).load(['first', 'second']);
+  const restarted = await createSettingsStore(file).load();
   expect(chooserListsFor(restarted, 'first')).toEqual(['sessions', 'windows']);
   expect(chooserListsFor(restarted, 'second')).toEqual(['topics']);
-  expect(hostListsFor(restarted, 'first')).toEqual(['recent', 'sessions']);
 });
 
 it('does not disable the final chooser list', () => {
@@ -41,13 +38,4 @@ it('reorders the shown lists', () => {
 it('offers the lists that are not shown as hidden', () => {
   expect(hiddenChooserLists(['topics'])).toEqual(['windows', 'sessions']);
   expect(hiddenChooserLists(['sessions', 'windows', 'topics'])).toEqual([]);
-});
-
-it.each([
-  [['recent', 'sessions', 'topics'], ['sessions', 'topics']],
-  [['recent', 'topics', 'sessions'], ['topics', 'sessions']],
-  [['topics'], ['topics', 'sessions']],
-  [['sessions'], ['sessions', 'topics']],
-] as const)('orders creation actions by panels %j', (panels, expected) => {
-  expect(hostCreationOrder(panels)).toEqual(expected);
 });

@@ -12,7 +12,6 @@ root = pathlib.Path(sys.argv[1])
 settings = json.loads((root / 'muxify-settings.json').read_text())
 records = json.loads((root / 'muxify-records.json').read_text())
 host = next(h for h in records['hosts'] if h['displayName'] == 'Dev Host')
-settings['hostListPreferences'] = {'version': 1, 'byHost': {host['id']: ['sessions']}}
 settings.pop('chooserListPreferences', None)
 (root / 'muxify-settings.json').write_text(json.dumps(settings))
 PY
@@ -27,9 +26,9 @@ python3 - "$MUXIFY_E2E_ROOT/menu.json" <<'PY'
 import json, sys
 nodes = json.load(open(sys.argv[1]))['data']['nodes']
 labels = [node.get('label') for node in nodes]
-assert labels.index('New Session') < labels.index('New Topic'), labels
-assert 'Configure panels' in labels
-print('Sessions panel puts New Session first.')
+assert labels.index('New Session') < labels.index('New Topic') < labels.index('Configure chooser'), labels
+assert 'Configure panels' not in labels, labels
+print('Options has New Session, New Topic and Configure chooser.')
 PY
 ad press 'role=button label="New Topic"' --settle
 ad wait 'label="Tag #work"' 15000
@@ -66,26 +65,19 @@ settings = json.loads((root / 'muxify-settings.json').read_text())
 records = json.loads((root / 'muxify-records.json').read_text())
 host = next(h for h in records['hosts'] if h['displayName'] == 'Dev Host')
 assert settings['chooserListPreferences'][host['id']] == ['windows', 'sessions'], settings
-assert settings['hostListPreferences']['byHost'][host['id']] == ['sessions'], settings
-settings['hostListPreferences']['byHost'][host['id']] = ['topics', 'sessions']
+assert settings['hostScreenTabs'][host['id']] == 'sessions', settings
 settings['chooserListPreferences'][host['id']] = ['sessions', 'windows']
 (root / 'muxify-settings.json').write_text(json.dumps(settings))
-print('Chooser edit persists without changing Host panels.')
+print('Chooser edit persists without changing the Host Screen tab.')
 PY
 ad open "$APP" --platform ios --relaunch "${device[@]}"
 ad wait 'label="Host Dev Host"' 15000
 ad press 'label="Host Dev Host"' --settle
 ad wait 'label="Host Options"' 8000
 ad press 'label="Host Options"' --settle
-ad wait 'label="New Topic"' 8000
-ad snapshot --json > "$MUXIFY_E2E_ROOT/menu.json"
-python3 - "$MUXIFY_E2E_ROOT/menu.json" <<'PY'
-import json, sys
-labels = [n.get('label') for n in json.load(open(sys.argv[1]))['data']['nodes']]
-assert labels.index('New Topic') < labels.index('New Session'), labels
-print('Topics panel puts New Topic first after restart.')
-PY
-ad press 'role=button label="Configure panels"' --settle
+ad wait 'label="Configure chooser"' 8000
+ad press 'role=button label="Configure chooser"' --settle
+ad wait 'id="chooser-shown-sessions"' 8000
 ad back --settle
 ad wait 'label="Session 0"' 15000
 ad press 'label="Session 0"' --settle
@@ -99,6 +91,6 @@ nodes = json.load(open(sys.argv[1]))['data']['nodes']
 labels = [n.get('label') for n in nodes]
 assert labels.index('Sessions') < labels.index('Windows'), labels
 assert 'Topics' not in labels, labels
-print('Saved chooser order survives restart independently of Topics panel.')
+print('Saved chooser order survives restart, and the Host Screen opens it too.')
 PY
 ad close

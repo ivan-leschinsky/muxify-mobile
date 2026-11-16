@@ -6,6 +6,8 @@ const TOPIC = 't1' as TopicId;
 
 function snapshot(sessions: [name: string, topic: string | null][]): EnvironmentSnapshot {
   return {
+    capabilities: [],
+    sidebar: null,
     tags: [],
     sessions: sessions.map(([name, topic], index) => ({
       id: `$${index}` as SessionId,

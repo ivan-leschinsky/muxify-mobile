@@ -111,8 +111,8 @@ _Avoid_: history (which is the shell's), buffer
 **Attach**:
 Opening a Control Connection onto a Session, and the thing that holds it
 afterwards. Attach itself only ever attaches, never creates — but Muxify can
-make a Session first, from the Host Screen's **+**. Rename and kill are still
-refused. See ADR 0005.
+make a Session first, at a folder, from Go to and from the Host Screen's **＋**
+menu. Rename and kill are still refused. See ADR 0005 and ADR 0024.
 
 It is what the *app* holds, not what a screen does: one Attach owns the
 Connection, the Control Connection, the Client and its size, the Topology, the
@@ -127,11 +127,11 @@ shows its phase and offers to end it. See ADR 0007.
 **Recent Session**:
 Muxify's memory of a Session this phone has opened, and when it last did. Not
 the Session, which lives on the Host and outlives every Connection — the
-memory. The Host Screen has a list of them, Recent Sessions, newest first,
-which shows the ones the Host still has. With that list on, the Sessions list
-leaves them out, so a Session that exists but has never been opened here is in
-a different list.
-_Avoid_: workspace, saved session, history
+memory. It is not a list on a screen. It ranks the running Sessions in Go to:
+the ones this phone opened come first, newest first. It also chooses the
+Session that a Topic card opens. The user cannot remove one, and a memory of a
+Session that the Host no longer has changes nothing.
+_Avoid_: workspace, saved session, history, Recent Sessions list (the old list on the Host Screen)
 
 **Last Place**:
 Where the user was when Muxify last closed: the Host, the Session and the Topic
@@ -143,17 +143,59 @@ Place, so a cold start can open the Web View again.
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
-The Host Screen has its own list choices, reached from Configure panels in
-its Options menu. Each Host stores its enabled lists and their order independently.
-On upgrade, existing Hosts receive the previous global choices once. A new
-Host uses the default Recent Sessions and Sessions lists. The same settings
-screen has separate Title chooser choices for this Host. Each view keeps its
-own enabled lists and order.
+**Host Screen**:
+The screen of one Host. It has the two views of the Mac's Sidebar as tabs. The
+Topics tab shows Pinned, In Play, the Guests, the Bench row and the No Topic
+row. The Sessions tab shows every running Session in the order tmux lists
+them, with its Topic under the name, and no Bench. The Host's Config decides
+which tabs show, with `sidebar.topics` and `sidebar.sessions`, so the Mac and
+the phone show the same views. A Host CLI that does not say shows both. A Host
+with no Host CLI, or an old one, shows only Sessions, with a line above them
+that says why. One tab has no tab control. The phone remembers the last tab of
+each Host. A tap on the tab control changes the tab. A swipe does not, because
+a swipe on a Topic card is its swipe action.
 
-The Host Screen has one Options menu. New Session and New Topic follow the
-order of the Sessions and Topics panels. A disabled panel's action comes last.
-Recent Sessions does not change this order. Configure panels follows them.
-Edit Host is in Settings.
+The row of the Session that the Attach is on shows the phase of the Attach,
+and a swipe on it offers Disconnect.
+
+A bar at the bottom has the Go to field and the **＋** menu, with New Topic and
+New Session at a folder. The bar does not show while the user moves a Topic
+card or fills an Open Place. Home and the Terminal Screen have no bar. The
+Options menu has Configure chooser. On a Host CLI that is too old for Go to,
+the bar does not show, and the Options menu has New Session, which asks for a
+name and no folder, and New Topic, with the sheets from before. Edit Host is
+in Settings. See ADR 0024.
+_Avoid_: Sessions screen, Host page, Configure panels (the old choice of lists), panels
+
+**Go to**:
+The field in the bar of the Host Screen, and the one list it shows in place of
+the tab while it has the keys, as Go to… on the Mac. The list has the running
+Sessions with their Topic, then the Session Paths and Worktrees of the Host,
+then a folder that the user typed, where a leading `~` is the Host's home
+folder. The Host ranks the paths: with the Mac's match for the text in the
+field, and by last visit for an empty field. The phone matches the running
+Sessions, and puts the Recent Sessions first.
+
+A tap on a running Session switches the Attach to it, with the Attach's Topic
+membership rules. A tap on a path goes to the Session in no Topic that runs
+there, which has the name of the Session Path. If none runs, the Host makes
+one there, and the Attach opens it. A long press on a path offers New Session
+here, which makes one more Session there with the next free name (`+2`). Each
+Session that the phone opens at a path is a visit, which the phone tells the
+Host, so the Mac and the phone rank by one last visit.
+
+The phone keeps the last list of each Host for an empty field and shows it at
+once. A new answer from the Host does not move rows that are on show: it shows
+when the user types or closes Go to. A pick that makes a Session is a Host
+Write. It waits for the Connection while the Host Screen has the focus, and
+sends nothing after the user leaves.
+_Avoid_: search, command palette, quick open, switcher
+
+**New Session at a folder**:
+The item of the **＋** menu that shows the Go to list with the Session Paths,
+the Worktrees and a typed folder only. A tap always makes a Session in no
+Topic there, with the next free name.
+_Avoid_: New Session (the old sheet, which asks for a name and no folder)
 
 **Home**:
 The list of saved Hosts, in the order set in Settings. Each row shows the Host
@@ -173,8 +215,9 @@ because a Host that cannot be reached has no Sessions to offer.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Write**:
-One change the user asks of a Host: New Topic, Edit Topic, New Session, Add a
-Session, and the menu orders, drops and wakes of a Topic card. The user never
+One change the user asks of a Host: New Topic, Edit Topic, a Go to pick that
+makes a Session, Add a Session, and the menu orders, drops and wakes of a
+Topic card. The user never
 sends it again blind: a Host Write that carries a Request is sent one more
 time with the same id when no answer came, and any other is not sent again by
 itself. While it runs, a second tap is ignored. It ends done, failed or
@@ -287,11 +330,20 @@ Host Screen shows them as one Bench row, with no count and no marks, that opens
 to show their cards.
 _Avoid_: backlog, hidden Topics, overflow
 
+**Bench peek**:
+What the Topics tab shows of the place the Attach is in while the Bench row
+hides it, as the Mac shows the card of its Location. While the Bench row is
+closed, the Benched card of the Attach's Topic, or of the Locked Session it is
+on, shows under the row. When the Attach's Session is in No Topic, that
+Session shows under the Bench row, also while the Bench is open, until the
+user opens the No Topic row, which lists it.
+_Avoid_: current card, pinned card
+
 **No Topic**:
-The Sessions on a Host that belong to no Topic. With Topics on and the Sessions
-list off, the Host Screen shows them in a separate group after the Topics and
-the Bench. Its No Topic row shows the count and opens to list the Sessions.
-Recent Sessions are left out when that list is on. An empty group is not shown.
+The Sessions on a Host that belong to no Topic. The Topics tab of the Host
+Screen shows them in a separate group after the Topics and the Bench. Its No
+Topic row shows the count and opens to list the Sessions. An empty group is
+not shown.
 _Avoid_: ungrouped Sessions, other Topics, Bench
 
 **Tag Mark**:
@@ -301,16 +353,28 @@ longer defines, or a colour the phone cannot read, shows as a dashed square.
 _Avoid_: tag chip, tag dot
 
 **New Topic**:
-The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
-has a title and one button for each Tag of the Host's Config, in
-Config order and in the Tag colour. Save opens Add a Session for the new Topic. That sheet confirms the Topic was
-created and offers Add later. An existing Topic keeps Cancel. An
-error from the Host shows in the sheet, and the sheet stays open (see Host Write). A
-Retry of the same title and Tags is the same Request. The Host
-Screen Options menu always offers New Session and New Topic.
-New Topic reads Config Tags when it opens. A failed read offers Retry Tags
-and keeps the entered title. Save does not wait for the read: before it
-answers, no Tag can be chosen.
+The sheet that the **＋** menu of the Host Screen opens, as New Topic on the Mac
+does. It has two steps. The first has a title and one button for each Tag of
+the Host's Config, in Config order and in the Tag colour. Return, or Create,
+makes an Empty Topic on the Host. An empty title makes nothing, and the sheet
+says "Give the Topic a title." The second step is in the same sheet: a search
+field and the Session Paths, Worktrees and typed folder of the Go to list,
+which the sheet read when it opened. A tap adds a Session at that folder to
+the Topic and opens it. A long press offers In a new Worktree. Add later
+closes the sheet and leaves the Empty Topic on the Host. The list has no
+running Session, because the Host CLI has no command that moves a Session into
+a Topic.
+
+An error from the Host shows in the sheet, and the sheet stays open (see Host
+Write). A Retry of the same title and Tags, or of the same folder, is the same
+Request. If the Attach fails after the Host made the Session, Retry Attach
+sends no second write. New Topic reads Config Tags when it opens. A failed
+read offers Retry Tags and keeps the entered title. Create does not wait for
+the read: before it answers, no Tag can be chosen.
+
+On a Host CLI that is too old for Go to, New Topic is the sheet from before:
+Save makes the Empty Topic and opens Add a Session for it, which confirms that
+the Topic was created and offers Add later.
 _Avoid_: Create Topic, Add Topic
 
 **Edit Topic**:
@@ -506,12 +570,12 @@ _Avoid_: title bar, toolbar
 
 **Title Sheet**:
 The chooser opened by the Header title or its down chevron, on the Terminal
-Screen and on the Web View. Each Host has its
-own enabled lists and their order, separate from the Host Screen panels.
-Windows is the default. Sessions includes previews and marks the current
+Screen and on the Web View. Each Host has its own enabled lists and their
+order. The tabs of the Host Screen do not change them. Windows is the
+default. Sessions includes previews and marks the current
 Session. Topics can be enabled separately. The first enabled list opens first.
-A single enabled list has no tab control. Configure chooser in Terminal
-Options opens these settings. A Session pick uses the Attach's Topic membership rules.
+A single enabled list has no tab control. Configure chooser, in the Options
+of the Terminal and of the Host Screen, opens these settings. A Session pick uses the Attach's Topic membership rules.
 
 Windows shows the current Session's Windows. With a Topic, it shows the full
 title, Topic Note and Tags, then each live Session's Windows and Agent marks.
@@ -610,8 +674,19 @@ the active Pane right and down, ⇧⌘H, ⇧⌘J, ⇧⌘K and ⇧⌘L go to the 
 side, ⌘C copies the active Pane's text as Copy Pane text does, and ⌘K clears
 the active Pane: the program in it draws its screen again and the Scrollback
 goes. tmux finds the Pane on a side, wraps at the edge, and keeps the Zoom.
+On the Host Screen, ⌘P puts the keys in the Go to field, ⌘N opens New Topic
+and ⌥⌘T goes to the other tab. In the Terminal, ⌘P goes to the Host Screen
+with the keys in the Go to field. In the Go to list, ⌘↩ is New Session here
+for the row.
 Settings > Keyboard Shortcuts changes the key of each one. Every one holds ⌘,
 because tmux has no ⌘ to give a Pane, and no two share a key.
+
+The List Keys are not Keyboard Shortcuts. They hold no ⌘, and the user cannot
+change them: ↑ and ↓ move the row that Return picks, ↩ picks it, Esc closes
+the list, and ⌥↩ in Add a Session adds the Session in a new Worktree. They
+work only while the list of Go to, or of the second step of New Topic, has the
+keys, where no Pane waits for a key. The KeyCommands module takes them by the
+same rule as a ⌘ chord.
 
 One rule, in the KeyCommands module, decides what a ⌘ chord is, for a
 hardware keyboard and for the Key Row's ⌘ alike: the Keyboard Shortcut with

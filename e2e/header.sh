@@ -18,8 +18,8 @@
 # accessibility tree. Each check reads the Host instead: tmux's Window size for
 # the font, the clipboard for the Pane text, `list-clients` for the Attach.
 #
-# The Topics list is off by default, so the app's settings get it for the run,
-# as e2e/topic-screen.sh does. The sandbox puts the settings back.
+# The Title Sheet has only Windows by default, so the app's settings get its
+# Sessions and Topics lists for the run. The sandbox puts the settings back.
 #
 # Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/header.sh
@@ -81,8 +81,6 @@ python3 - "$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP
 import json, sys
 path = sys.argv[1]
 settings = json.load(open(path))
-settings.pop("hostListPreferences", None)
-settings["hostScreenLists"] = ["topics", "sessions"]
 records = json.load(open(path.replace('muxify-settings.json', 'muxify-records.json')))
 settings['chooserListPreferences'] = {host['id']: ['sessions', 'windows', 'topics'] for host in records['hosts']}
 json.dump(settings, open(path, "w"))

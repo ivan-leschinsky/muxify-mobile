@@ -6,6 +6,7 @@ import {
   type ThemeId,
   type ThemeKind,
 } from '@/constants/app-theme';
+import type { HostScreenTab } from '@/domain/host-screen';
 import { parseKeyboardShortcuts, type KeyboardShortcuts } from '@/keyboard/keyboard-shortcuts';
 
 /**
@@ -41,15 +42,8 @@ export interface Settings {
    * starts on.
    */
   zoomMultipaneWindows: boolean;
-  /**
-   * Legacy list choice, retained until migration copies it to existing Hosts.
-   * Domain list builders also accept this shape for one resolved Host.
-   */
-  hostScreenLists: HostScreenLists;
-  hostListPreferences?: {
-    version: 1;
-    byHost: Readonly<Record<string, HostScreenLists>>;
-  };
+  /** The Host Screen tab the user last chose on each Host, by Host id. */
+  hostScreenTabs?: Readonly<Record<string, HostScreenTab>>;
   /**
    * Whether a cold start opens the Last Place again, if there is one. Off by
    * default: an app that connects to a machine on launch is a surprise
@@ -76,14 +70,6 @@ export function resolveTheme(
   const kind = settings.appearance === 'system' ? phoneScheme : settings.appearance;
   return kind === 'light' ? settings.lightTheme : settings.darkTheme;
 }
-
-/** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
-export const HOST_SCREEN_LISTS = ['recent', 'sessions', 'topics'] as const;
-export type HostScreenList = (typeof HOST_SCREEN_LISTS)[number];
-export type HostScreenLists = readonly [HostScreenList, ...HostScreenList[]];
-export const HOST_SCREEN_LIST_NAMES: Record<HostScreenList, string> = {
-  recent: 'Recent Sessions', sessions: 'Sessions', topics: 'Topics',
-};
 
 export const CHOOSER_LISTS = ['windows', 'sessions', 'topics'] as const;
 export type ChooserList = (typeof CHOOSER_LISTS)[number];
@@ -133,11 +119,6 @@ function moved<T>(items: readonly T[], sources: number[], destination: number): 
   return [...before, ...moving, ...after];
 }
 
-export function hostCreationOrder(lists: HostScreenLists): ('sessions' | 'topics')[] {
-  const enabled = lists.filter((list): list is 'sessions' | 'topics' => list !== 'recent');
-  return [...enabled, ...(['sessions', 'topics'] as const).filter((list) => !enabled.includes(list))];
-}
-
 export const MIN_FONT_SIZE = 5;
 export const MAX_FONT_SIZE = 24;
 /** Where the stepper starts when the user first turns the default off. */
@@ -152,7 +133,6 @@ export const DEFAULT_SETTINGS: Settings = {
   lightTheme: 'solarized-light',
   darkTheme: 'ghostty',
   zoomMultipaneWindows: true,
-  hostScreenLists: ['recent', 'sessions'],
   reconnectOnStart: false,
 };
 
@@ -210,81 +190,13 @@ const DEFAULT_THEME_CHOICE: ThemeChoice = {
   darkTheme: DEFAULT_SETTINGS.darkTheme,
 };
 
-/**
- * The lists that reach every Session of a Host. Recent Sessions is not one: on
- * a Host this phone has never opened a Session of, it is empty.
- */
-const REACH_EVERY_SESSION: readonly HostScreenList[] = ['sessions', 'topics'];
-
-/** The lists in the order given, or null when none of them reaches every Session. */
-function reachable(lists: readonly HostScreenList[]): HostScreenLists | null {
-  const [first, ...rest] = lists;
-  if (first === undefined) return null;
-  return lists.some((list) => REACH_EVERY_SESSION.includes(list)) ? [first, ...rest] : null;
-}
-
-/** Whether this list is on and turning it off would leave no way to every Session. */
-export function mustStayOn(lists: HostScreenLists, list: HostScreenList): boolean {
-  return lists.includes(list) && reachable(lists.filter((other) => other !== list)) === null;
-}
-
-/**
- * The Host Screen lists a saved value names: the known ones, each once, in
- * the saved order. A value with no list that reaches every Session is the
- * default, because that Host Screen is not a choice the user can make.
- *
- * Settings saved before Recent Sessions was a list of their own say
- * `recentSessionsFirst` instead. On, the Sessions list was drawn with the
- * Recent Sessions above the rest, so Recent Sessions goes in just above
- * Sessions and the Host Screen looks as it did.
- */
-function parseHostScreenLists(raw: unknown, recentSessionsFirst: unknown): HostScreenLists {
-  const saved = Array.isArray(raw)
-    ? [
-        ...new Set(
-          raw.filter((entry): entry is HostScreenList =>
-            (HOST_SCREEN_LISTS as readonly unknown[]).includes(entry),
-          ),
-        ),
-      ]
-    : null;
-  if (typeof recentSessionsFirst === 'boolean' && !saved?.includes('recent')) {
-    // Before the lists could be chosen, the Host Screen was the Sessions list.
-    const before = saved ?? ['sessions'];
-    const lists = recentSessionsFirst
-      ? before.flatMap((list): HostScreenList[] => (list === 'sessions' ? ['recent', list] : [list]))
-      : before;
-    return reachable(lists) ?? DEFAULT_SETTINGS.hostScreenLists;
-  }
-  return (saved && reachable(saved)) ?? DEFAULT_SETTINGS.hostScreenLists;
-}
-
-/** The Host Screen lists that are off, in the order Settings offers them. */
-export function hiddenHostScreenLists(lists: HostScreenLists): HostScreenList[] {
-  return HOST_SCREEN_LISTS.filter((list) => !lists.includes(list));
-}
-
-/**
- * Shows one list, at the bottom of the Host Screen, or hides it. Sessions or
- * Topics stays on (see mustStayOn): Settings disables that delete control, and
- * this keeps the rule if it is pressed anyway.
- */
-export function switchHostScreenList(
-  lists: HostScreenLists,
-  list: HostScreenList,
-  on: boolean,
-): HostScreenLists {
-  const others = lists.filter((candidate) => candidate !== list);
-  return reachable(on ? [...others, list] : others) ?? lists;
-}
-
-/** The lists after the user drags rows of the shown Host Screen lists. */
-export function moveHostScreenLists(
-  lists: HostScreenLists,
-  sources: number[],
-  destination: number,
-): HostScreenLists {
-  return reachable(moved(lists, sources, destination)) ?? lists;
+/** The last tab of each Host a saved value names. A tab this version does not know is dropped. */
+function parseHostScreenTabs(raw: unknown): Record<string, HostScreenTab> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const tabs = Object.entries(raw).filter(
+    (entry): entry is [string, HostScreenTab] => entry[1] === 'topics' || entry[1] === 'sessions',
+  );
+  return tabs.length > 0 ? Object.fromEntries(tabs) : undefined;
 }
 
 /**
@@ -294,6 +206,9 @@ export function moveHostScreenLists(
  * Every field is checked rather than trusted: this file is the app's own, but a
  * half-written one after a crash, or one from a version that knew different
  * settings, must not leave the terminal unusable.
+ *
+ * A field this version does not know is not carried over: the next save does
+ * not write it.
  */
 export function parseSettings(raw: unknown): Settings {
   if (typeof raw !== 'object' || raw === null) return DEFAULT_SETTINGS;
@@ -304,50 +219,24 @@ export function parseSettings(raw: unknown): Settings {
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
 
-  const preferences = record.hostListPreferences;
-  const byHost = typeof preferences === 'object' && preferences !== null &&
-    'version' in preferences && preferences.version === 1 && 'byHost' in preferences &&
-    typeof preferences.byHost === 'object' && preferences.byHost !== null && !Array.isArray(preferences.byHost)
-    ? Object.fromEntries(Object.entries(preferences.byHost).map(([id, lists]) => [id, parseHostScreenLists(lists, undefined)]))
-    : null;
-
   const chooser = record.chooserListPreferences;
   const chooserListPreferences = typeof chooser === 'object' && chooser !== null && !Array.isArray(chooser)
     ? Object.fromEntries(Object.entries(chooser).map(([id, lists]) => [id, parseChooserLists(lists)]))
     : undefined;
 
   const keyboardShortcuts = parseKeyboardShortcuts(record.keyboardShortcuts);
+  const hostScreenTabs = parseHostScreenTabs(record.hostScreenTabs);
 
   return {
     ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
     ...(keyboardShortcuts === undefined ? {} : { keyboardShortcuts }),
-    ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
+    ...(hostScreenTabs === undefined ? {} : { hostScreenTabs }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
     ligatures: typeof ligatures === 'boolean' ? ligatures : DEFAULT_SETTINGS.ligatures,
     ...parseThemeChoice(record),
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
-    hostScreenLists: parseHostScreenLists(record.hostScreenLists, record.recentSessionsFirst),
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
-  };
-}
-
-export function hostListsFor(settings: Settings, hostId: string): HostScreenLists {
-  const preferences = settings.hostListPreferences;
-  if (!preferences) return settings.hostScreenLists;
-  return Object.hasOwn(preferences.byHost, hostId)
-    ? preferences.byHost[hostId]
-    : DEFAULT_SETTINGS.hostScreenLists;
-}
-
-export function migrateHostLists(settings: Settings, existingHostIds: readonly string[]): Settings {
-  if (settings.hostListPreferences) return settings;
-  return {
-    ...settings,
-    hostListPreferences: {
-      version: 1,
-      byHost: Object.fromEntries(existingHostIds.map((id) => [id, settings.hostScreenLists])),
-    },
   };
 }

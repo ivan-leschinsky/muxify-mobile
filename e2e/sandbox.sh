@@ -18,7 +18,9 @@
 # - The app, over SSH: a private sshd on a free port sets the same variables
 #   with SetEnv. The app's saved Dev Host is pointed at that port for the run,
 #   with no Fingerprint, no Recent Sessions, no Last Place and no Topic Places,
-#   because the sandbox is a Host the app has never seen.
+#   because the sandbox is a Host the app has never seen. Its Host Screen
+#   starts on the Sessions tab, where Session 0 is. A suite about Topic cards
+#   takes hostScreenTabs out of the settings, which gives the Topics tab.
 #
 # The app's `muxify` over SSH is a stub, first on the sshd's PATH. It gives
 # every command to the real CLI except `browser`, which would talk to the
@@ -125,9 +127,9 @@ stop_app
 cp "$RECORDS" "$SETTINGS" "$ROOT/saved/" || exit 1
 { keyboard_minimization read 2>/dev/null || echo unset; } >"$ROOT/saved/keyboard-minimization"
 keyboard_minimization write -bool false || exit 1
-python3 - "$RECORDS" "$PORT" <<'PY' || exit 1
+python3 - "$RECORDS" "$PORT" "$SETTINGS" <<'PY' || exit 1
 import json, sys
-path, port = sys.argv[1], int(sys.argv[2])
+path, port, settings_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 records = json.load(open(path))
 dev = [h for h in records["hosts"] if h["address"] in ("127.0.0.1", "localhost")]
 if not dev:
@@ -141,6 +143,9 @@ if (records.get("lastPlace") or {}).get("hostId") in ids:
     del records["lastPlace"]
 records["topicPlaces"] = [p for p in records.get("topicPlaces", []) if p.get("hostId") not in ids]
 json.dump(records, open(path, "w"))
+settings = json.load(open(settings_path))
+settings["hostScreenTabs"] = {**settings.get("hostScreenTabs", {}), **{host: "sessions" for host in ids}}
+json.dump(settings, open(settings_path, "w"))
 PY
 
 sandboxed() {

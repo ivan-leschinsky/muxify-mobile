@@ -21,7 +21,7 @@ const CHANGED: Settings = {
   lightTheme: 'gruvbox-light',
   darkTheme: 'dracula',
   zoomMultipaneWindows: false,
-  hostScreenLists: ['topics', 'sessions'],
+  hostScreenTabs: { host1: 'sessions' },
   reconnectOnStart: true,
 };
 
@@ -54,6 +54,20 @@ describe('settings store', () => {
 
     expect(saved.fontSize).toBe(MAX_FONT_SIZE);
     expect(JSON.parse(read()!).fontSize).toBe(MAX_FONT_SIZE);
+  });
+
+  it('writes none of the Host Screen lists that Configure panels saved', async () => {
+    const { file, read } = fakeFile(JSON.stringify({
+      darkTheme: 'dracula',
+      hostScreenLists: ['topics', 'recent'],
+      recentSessionsFirst: true,
+      hostListPreferences: { version: 1, byHost: { host1: ['sessions'] } },
+    }));
+    const store = createSettingsStore(file);
+
+    await store.save(await store.load());
+
+    expect(JSON.parse(read()!)).toEqual({ ...DEFAULT_SETTINGS, darkTheme: 'dracula' });
   });
 
   it('is defaults when the file cannot be read at all', async () => {
