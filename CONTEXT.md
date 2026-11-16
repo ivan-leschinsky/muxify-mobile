@@ -152,8 +152,13 @@ which tabs show, with `sidebar.topics` and `sidebar.sessions`, so the Mac and
 the phone show the same views. A Host CLI that does not say shows both. A Host
 with no Host CLI, or an old one, shows only Sessions, with a line above them
 that says why. One tab has no tab control. The phone remembers the last tab of
-each Host. A tap on the tab control changes the tab. A swipe does not, because
-a swipe on a Topic card is its swipe action.
+each Host. A tap on the tab control changes the tab. So does a sideways swipe
+that starts outside every row: on the tab control, on a section header or in
+the empty area under the rows. The two lists follow the finger as one strip,
+with the numbers of the Pane Swipe, and the tab control changes at the commit
+point, with the tick. A swipe that starts on a row is the row's, because a
+swipe on a Topic card is its swipe action. A swipe toward no tab springs back.
+While the Host Screen shows two tabs, its Back Swipe is at the edge only.
 
 The row of the Session that the Attach is on shows the phase of the Attach,
 and a swipe on it offers Disconnect.
@@ -505,6 +510,17 @@ line counted from the first line of the Scrollback, so it keeps that number
 while output arrives. Part of the local patch to `expo-libghostty`.
 _Avoid_: overlay, text view
 
+**Back Swipe**:
+A drag right that takes a pushed screen off and shows the one under it. The
+left edge always goes back: a drag right that starts in the edge band, the 24
+points at the left edge of the screen. On most screens a drag right from
+anywhere goes back too, as on iOS 26. A screen with its own sideways move, the
+Terminal Screen with its Pane Swipe and the Host Screen with two tabs, keeps
+the rest of the screen for that move. The Terminal Screen has no Back Swipe
+while a Selection is open, because a handle can be at the edge. Back in the
+Header always works. See ADR 0025.
+_Avoid_: swipe back, edge swipe, pop gesture
+
 **Pane Swipe**:
 A horizontal drag of one finger on the Surface. A swipe left goes to the next
 Pane of the Window and a swipe right to the previous one, in index order, and
@@ -522,9 +538,8 @@ springs back. Behind the Pane that moves is the terminal background. In a
 Window that is not zoomed no Pane moves. Every other drag is vertical and
 moves the Scrollback, or is the wheel for a program that listens for the
 mouse. That program gets nothing from a horizontal drag. While a Selection is
-open a horizontal drag is for its handles and changes no Pane. The system's
-back swipe is off on the Terminal Screen except at the left edge, because it
-is the same drag as a swipe right.
+open a horizontal drag is for its handles and changes no Pane. A drag right
+that starts in the edge band is the Back Swipe, not a swipe right.
 
 On iPad, a continuous two-finger scroll on a physical trackpad uses the same
 axis lock and Pane Swipe thresholds. A horizontal gesture cycles from the

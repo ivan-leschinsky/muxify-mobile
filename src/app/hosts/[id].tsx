@@ -39,6 +39,7 @@ import {
   type TopicRow,
 } from '@/components/host-screen-row-view';
 import { HostWriteRow } from '@/components/host-write-row';
+import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
 import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
@@ -50,6 +51,7 @@ import {
   tabOnShow,
   type HostScreenInput,
   type HostScreenRow,
+  type HostScreenSection,
   type HostScreenTab,
   type OpenableRow,
 } from '@/domain/host-screen';
@@ -62,6 +64,7 @@ import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
+import { useBackSwipe } from '@/navigation/use-back-swipe';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/records';
@@ -361,6 +364,68 @@ export default function HostScreen() {
   });
   const fieldSubmitted = useCallback(() => submit.current(), []);
 
+  const renderSection = (section: HostScreenSection) => (
+    <Section
+      key={section.id}
+      header={
+        section.title === null ? undefined : (
+          <SectionTitle
+            title={section.title}
+            palette={palette}
+            target={targets?.headers.get(section.id)}
+            onPress={(target) => picked !== undefined && sendMove(picked.id, target)}
+          />
+        )
+      }
+      modifiers={[listRowBackground(palette.rowSurface)]}>
+      {section.rows.map(renderRow)}
+    </Section>
+  );
+
+  // While the Go to field has the keys, the Go to list stands in place of the tab.
+  const onShowTab =
+    goTo !== null ? (
+      <>
+        <HostWriteRow
+          write={pick.write}
+          words={{
+            host: pick.hostName,
+            sending: `Creating ${pick.picked?.name ?? 'a Session'}`,
+            attaching: pick.picked ? `Opening ${pick.picked.name}` : undefined,
+            mayHaveHappened: 'The Session may exist.',
+          }}
+          palette={palette}
+          onRetry={pick.retry}
+          onCheck={pick.check}
+        />
+        <GoToList
+          rows={rows}
+          highlighted={onShow}
+          reading={reading}
+          palette={palette}
+          now={listedAt}
+          locked={pick.write.kind === 'running'}
+          onPick={pickRow}
+          folderMenu={goTo === 'all' ? { label: 'New Session here', icon: 'plus', onPress: (row) => openFolder(row, true) } : undefined}
+        />
+      </>
+    ) : !firstReadAnswered(input) ? (
+      <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+        {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
+      </Section>
+    ) : sections.map(renderSection);
+
+  const swiftUIColors = [
+    // See settings.tsx: SwiftUI follows the phone, not the app.
+    environment('colorScheme', appearance),
+    background(palette.background),
+    tint(palette.controlAccent),
+  ];
+  const pickerShown = tabs.length > 1 && goTo === null && targets === null && firstReadAnswered(input);
+  // A swipe outside the rows changes the tab, so back is at the edge only.
+  const tabSwipe = pickerShown && filling === null;
+  useBackSwipe(tabSwipe ? 'edge' : 'anywhere');
+
   return (
     <View style={styles.fill}>
       <Stack.Screen
@@ -418,73 +483,35 @@ export default function HostScreen() {
         </>
       ) : null}
 
-      <Host style={styles.fill} matchContents={false}>
-        <VStack
-          spacing={0}
-          modifiers={[
-            // See settings.tsx: SwiftUI follows the phone, not the app.
-            environment('colorScheme', appearance),
-            background(palette.background),
-            tint(palette.controlAccent),
-          ]}>
-          {tabs.length > 1 && goTo === null && targets === null && firstReadAnswered(input) ? (
-            <Picker
-              selection={tab}
-              onSelectionChange={(next) => rememberHostScreenTab(id, next)}
-              modifiers={[pickerStyle('segmented'), accessibilityLabel('Host Screen view'), padding({ horizontal: 16, vertical: 8 })]}>
-              {tabs.map((each) => <Text key={each} modifiers={[tag(each)]}>{TAB_NAMES[each]}</Text>)}
-            </Picker>
-          ) : null}
-          <Form modifiers={[scrollContentBackground('hidden')]}>
-            {goTo !== null ? (
-              <>
-                <HostWriteRow
-                  write={pick.write}
-                  words={{
-                    host: pick.hostName,
-                    sending: `Creating ${pick.picked?.name ?? 'a Session'}`,
-                    attaching: pick.picked ? `Opening ${pick.picked.name}` : undefined,
-                    mayHaveHappened: 'The Session may exist.',
-                  }}
-                  palette={palette}
-                  onRetry={pick.retry}
-                  onCheck={pick.check}
-                />
-                <GoToList
-                  rows={rows}
-                  highlighted={onShow}
-                  reading={reading}
-                  palette={palette}
-                  now={listedAt}
-                  locked={pick.write.kind === 'running'}
-                  onPick={pickRow}
-                  folderMenu={goTo === 'all' ? { label: 'New Session here', icon: 'plus', onPress: (row) => openFolder(row, true) } : undefined}
-                />
-              </>
-            ) : !firstReadAnswered(input) ? (
-              <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-                {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
-              </Section>
-            ) : sections.map((section) => (
-              <Section
-                key={section.id}
-                header={
-                  section.title === null ? undefined : (
-                    <SectionTitle
-                      title={section.title}
-                      palette={palette}
-                      target={targets?.headers.get(section.id)}
-                      onPress={(target) => picked !== undefined && sendMove(picked.id, target)}
-                    />
-                  )
-                }
-                modifiers={[listRowBackground(palette.rowSurface)]}>
-                {section.rows.map(renderRow)}
-              </Section>
-            ))}
-          </Form>
-        </VStack>
-      </Host>
+      <TabSwipe
+        tabs={tabs}
+        tab={tab}
+        enabled={tabSwipe}
+        onSwitch={(next) => rememberHostScreenTab(id, next)}
+        header={(shown) =>
+          pickerShown ? (
+            <Host matchContents={{ vertical: true }}>
+              <VStack modifiers={swiftUIColors}>
+                <Picker
+                  selection={shown}
+                  onSelectionChange={(next) => rememberHostScreenTab(id, next)}
+                  modifiers={[pickerStyle('segmented'), accessibilityLabel('Host Screen view'), padding({ horizontal: 16, vertical: 8 })]}>
+                  {tabs.map((each) => <Text key={each} modifiers={[tag(each)]}>{TAB_NAMES[each]}</Text>)}
+                </Picker>
+              </VStack>
+            </Host>
+          ) : null
+        }
+        renderTab={(each) => (
+          <Host style={styles.fill} matchContents={false}>
+            <VStack spacing={0} modifiers={swiftUIColors}>
+              <Form modifiers={[scrollContentBackground('hidden')]}>
+                {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
+              </Form>
+            </VStack>
+          </Host>
+        )}
+      />
       <FillPlaceSheet choices={choices} onPick={fillPlace} onDismiss={() => setFilling(null)} />
     </View>
   );
