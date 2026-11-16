@@ -73,7 +73,7 @@ describe('what tmux said', () => {
 describe('how a Connection ended', () => {
   it('reads tmux letting go as the Session ending', () => {
     expect(reasonForClosure('exit', 'server exited unexpectedly').kind).toBe('session-ended');
-    expect(reasonForClosure('exit', 'The Session was detached').kind).toBe('session-ended');
+    expect(reasonForClosure('exit', 'The Session ended').kind).toBe('session-ended');
   });
 
   it('still reads a missing tmux as a missing tmux, however it arrived', () => {

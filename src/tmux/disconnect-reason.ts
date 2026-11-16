@@ -157,8 +157,8 @@ export function reasonForAttachFailure(error: unknown): DisconnectReason {
 export function reasonForClosure(cause: ClosedCause, detail: string): DisconnectReason {
   switch (cause) {
     case 'exit': {
-      // tmux letting go is the Session ending, in tmux's own words: "the
-      // Session was detached", "server exited unexpectedly". The exception
+      // tmux letting go is the Session ending, in tmux's own words, such as
+      // "server exited unexpectedly", or in ours when tmux gave none. The exception
       // is a tmux that was never there to let go of, which says so in the
       // shell's words instead and is a Host record to fix rather than a
       // Session to mourn.

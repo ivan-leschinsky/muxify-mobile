@@ -269,10 +269,7 @@ export default function TerminalScreen() {
         visit: sessionVisit(host),
         attach: async () => {
           if (left) return;
-          const opened = await holder.open(request);
-          // Try again after a failed Attach: the holder hands back the same
-          // Attach, still disconnected, so it is asked for another go.
-          if (opened.state().phase.kind === 'disconnected') opened.reconnect();
+          await holder.open(request);
           accepted = true;
         },
         progress: (next) => {
