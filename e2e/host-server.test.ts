@@ -8,18 +8,21 @@
  * It runs the Host CLI that `(cd ../muxify-shell && make host-cli)` builds, or
  * the one MUXIFY_HOST_CLI names, as the link would over SSH: one exec channel,
  * here a child shell whose stdin, stdout and stderr are the channel's. It
- * checks the handshake, a `ping`, the snapshot subscription's first item and a
- * clean close.
+ * checks the handshake, a `ping`, the snapshot subscription's first item, a
+ * clean close, and the requests the phone sends: Host Writes, Go to, Browser
+ * Tabs and Attachment uploads.
  *
  * Every command runs against a Muxify of its own: its Topic records, its Config
  * and its tmux server live in a temp folder, which is removed afterwards, the
  * way e2e/topics.test.ts and e2e/sandbox.sh do it.
  */
 import { execFile, spawn, type ChildProcess } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { dirname, join, resolve } from 'path';
 
 import { browserTabsOn } from '@/browser/read-browser-tabs';
+import { attachmentUpload, CHUNK_BYTES } from '@/composer/host-upload';
+import type { AttachmentFile, Upload } from '@/composer/types';
 import { createHostServer, HostServerError, type HostServer, type HostServerState, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import { shellQuote } from '@/tmux/commands';
@@ -275,6 +278,33 @@ describe('the Host Server link against a real muxify server', () => {
       expect(await browserTabsOn(HOST, '@9999', connections)).toEqual({ kind: 'failed', error: expect.stringContaining('@9999') });
     } finally {
       await runInShell(`tmux kill-window -t ${shellQuote(window)}`);
+      server.close();
+    }
+  }, 60_000);
+
+  it('uploads a binary Attachment in pipelined chunks, and the Host has the same bytes', async () => {
+    const server = startServer();
+    await until(server, ['live']);
+    // Every byte value, over more chunks than wait at one time.
+    const data = Uint8Array.from({ length: 17 * CHUNK_BYTES + 7 }, (_, index) => (index * 31 + (index >> 8)) % 256);
+    let at = 0;
+    const file: AttachmentFile = {
+      id: 'e2e-upload', uri: '', name: "a 'quoted' $(touch NO).bin", size: data.length, image: false, dispose: () => {},
+      open: () => ({ readBytes: (length) => data.subarray(at, (at += length)), close: () => {} }),
+    };
+    const progress: number[] = [];
+    const script = jest.fn<Promise<string>, Parameters<Upload>>();
+    try {
+      const path = await attachmentUpload(() => server, script)(file, new AbortController().signal, ({ sent }) => progress.push(sent));
+      try {
+        expect(script).not.toHaveBeenCalled();
+        expect(path.endsWith("/a 'quoted' $(touch NO).bin")).toBe(true);
+        expect(new Uint8Array(readFileSync(path))).toEqual(data);
+        expect(progress.at(-1)).toBe(data.length);
+      } finally {
+        rmSync(dirname(path), { recursive: true, force: true });
+      }
+    } finally {
       server.close();
     }
   }, 60_000);

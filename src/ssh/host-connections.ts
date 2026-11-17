@@ -1,3 +1,4 @@
+import { attachmentUpload } from '@/composer/host-upload';
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
@@ -434,7 +435,8 @@ export function createHostConnections(options: {
 
       return {
         transport: dialed.transport,
-        upload: dialed.upload,
+        // Through the Host Server, read when an upload starts; the script only in Sessions only.
+        upload: attachmentUpload(() => entry.server, dialed.upload),
         fingerprint: dialed.fingerprint,
         verdict: dialed.verdict,
         close: () => release(false),

@@ -7,7 +7,9 @@ import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
+import { attachmentUpload } from '@/composer/host-upload';
 import type { AttachmentFile, Upload } from '@/composer/types';
+import { fakeHostServer } from '@/test-support/fake-host-server';
 
 import {
   openAttach,
@@ -1102,6 +1104,20 @@ describe('the Key Row’s Shortcuts', () => {
     // The path as the Composer writes one into a message: single-quoted, with
     // its own quote closed, escaped and reopened.
     expect(server.typed()).toBe("'/tmp/muxify/it'\\''s a shot.png'");
+  });
+
+  it('uploads a pasted image through the Host Server and pastes the path it answers', async () => {
+    const host = fakeHostServer();
+    host.on.upload = () => ({ path: '/tmp/muxify-paste.AbCdEfGh/pasted-image.png' });
+    const { kit, server } = await onServer({ upload: attachmentUpload(() => host.server, undefined) });
+
+    const image = { ...stagedImage, open: () => ({ readBytes: () => Uint8Array.of(1, 2, 3), close: () => {} }) };
+
+    await kit.attach.paste({ kind: 'image', file: image }, never);
+    await settle();
+
+    expect(host.requests).toEqual([{ upload: { name: 'pasted-image.png', offset: 0, data: 'AQID', last: true } }]);
+    expect(server.typed()).toBe("'/tmp/muxify-paste.AbCdEfGh/pasted-image.png'");
   });
 
   it('refuses an image on a Connection that cannot upload, and pastes nothing', async () => {

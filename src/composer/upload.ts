@@ -19,9 +19,27 @@ export type OpenUploadChannel = (
 const CHUNK = 64 * 1024;
 const TIMEOUT = 30_000;
 
-/** head -c, wc and base64 are available on both macOS and Linux Hosts. */
+/** The name an Attachment takes on the Host: one path component, with no control characters. */
+export function attachmentName(name: string): string {
+  const filename = name.replace(/[\x00-\x1f\x7f/\\]/g, '_').slice(0, 120);
+  return filename === '' || filename === '.' || filename === '..' ? 'attachment' : filename;
+}
+
+/** The path a Host answers for an upload, checked before the Composer pastes it. */
+export function checkedHostPath(path: unknown): string {
+  if (typeof path !== 'string' || !path.startsWith('/') || /[\x00-\x1f\x7f]/.test(path)) {
+    throw new Error('The Host returned an invalid attachment path.');
+  }
+  return path;
+}
+
+/**
+ * The upload script, for a Host in Sessions only: the Host Server's `upload`
+ * takes every other upload. head -c, wc and base64 are available on both
+ * macOS and Linux Hosts.
+ */
 export function uploadCommand(id: string, name: string, size: number): string {
-  const filename = name.replace(/[\x00-\x1f\x7f/\\]/g, '_').slice(0, 120) || 'attachment';
+  const filename = attachmentName(name);
   const script = `set -eu
 umask 077
 dir="$HOME/.cache/muxify/attachments/${id}"
@@ -137,11 +155,7 @@ export function createUploader(open: OpenUploadChannel): Upload {
       if (!reply.startsWith('PATH ')) throw new Error('The Host did not finish the upload.');
       if (await next() !== 'EXIT') throw new Error('The upload did not complete.');
       checkAborted(signal);
-      const absolute = bytesToUtf8(base64ToBytes(reply.slice(5)));
-      if (!absolute.startsWith('/') || /[\x00-\x1f\x7f]/.test(absolute)) {
-        throw new Error('The Host returned an invalid attachment path.');
-      }
-      return absolute;
+      return checkedHostPath(bytesToUtf8(base64ToBytes(reply.slice(5))));
     } finally {
       finished = true;
       signal.removeEventListener('abort', abort);

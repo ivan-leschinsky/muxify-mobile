@@ -13,7 +13,7 @@ export interface SentWrite {
  * A live Host Server for screen tests. Each request is kept and answered by
  * `answer`, which a test sets: what it returns is the `ok` of the `end`, and
  * what it throws ends the request with that error. A request whose case is in
- * `on` (`session_paths`, `visit_session_path`, `browser_tabs`) is answered there instead, with
+ * `on` (`session_paths`, `visit_session_path`, `browser_tabs`, `upload`) is answered there instead, with
  * the case's own payload. A subscription's first item is what `pushes` holds
  * for its kind (`snapshot`, `topic`).
  *
