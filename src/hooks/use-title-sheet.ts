@@ -136,7 +136,11 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
 
   const topicView = state?.topic?.view;
   const topic = topicView ? lastTopic(topicView) : null;
-  const rereadTopic = useCallback(() => { void attach?.refreshTopic(); }, [attach]);
+  /** The Title Sheet's Retry: the Topic is followed again with a new subscription. */
+  const rereadTopic = useCallback(() => { attach?.refreshTopic(); }, [attach]);
+  // While this screen is focused it shows the Topic, in its Header and this
+  // sheet, and the Attach follows the Topic's pushes.
+  useFocusEffect(useCallback(() => attach?.showTopic(), [attach]));
 
   const sessionName = state?.sessionName;
   const [windowTabs, setWindowTabs] = useState<{ revision: number; session: string | undefined; window: string; tabs: BrowserTab[] } | null>(null);
@@ -162,9 +166,8 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     setTitleSheet({ open: true, revision: ++chooserRevision.current });
     attach.refreshTopology();
     if (sessionsOn) attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
-    if (state?.topic) rereadTopic();
     if (topicsOn) void readHost();
-  }, [attach, state, rereadTopic, topicsOn, sessionsOn, readHost, beforeOpen]);
+  }, [attach, state, topicsOn, sessionsOn, readHost, beforeOpen]);
 
   const openTab = useCallback(
     (tab: BrowserTab) => {

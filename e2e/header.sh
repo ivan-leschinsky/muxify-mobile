@@ -11,8 +11,8 @@
 #   4  Copy Pane text puts the Pane's text on the clipboard
 #   5  the chooser lists the Host's Topics, and a Topic opens its
 #      Session in the current Attach
-#   6  Disconnect ends the Attach, so the Host has no Client left, and lands
-#      on Home
+#   6  Disconnect ends the Attach, so the Host has no Client of it left, and
+#      lands on Home
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Each check reads the Host instead: tmux's Window size for
@@ -57,10 +57,14 @@ attach() {
 
 # Opens ⋯ and presses one of its items. Pressed again if the menu did not come
 # up: a press landing while the screen is still settling does nothing at all.
+# With `bottom`, the menu is scrolled to its end first: with a Topic and the
+# keyboard up, its last items are under the keyboard, where a press lands on a
+# key although the item reads as visible.
 option() {
   for _ in 1 2 3; do
     agent-device press 'label="Options"' >/dev/null 2>&1
     if agent-device wait "label=\"$1\"" 3000 >/dev/null 2>&1; then
+      [ "${2:-}" != bottom ] || { agent-device scroll down >/dev/null 2>&1; sleep 1; }
       # By role: a menu item is a cell and a button under one label.
       agent-device press "role=button label=\"$1\"" >/dev/null 2>&1
       return 0
@@ -152,10 +156,12 @@ agent-device is text 'id="attached-session"' "$TOPIC_SESSION" >/dev/null 2>&1 ||
 echo "     the Topic opened its Session in the same Attach"
 
 echo "6/6  Disconnect ends the Attach and returns to the Host Screen"
-option "Disconnect"
+option "Disconnect" bottom
 agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Disconnect did not return to the Host Screen"
 sleep 2
-CLIENTS=$(on_host "tmux list-clients" | wc -l | tr -d ' ')
+# The Host Server's own control client, on its Session muxify-watch, stays
+# while the Host Screen holds the Connection: it is not the Attach's.
+CLIENTS=$(on_host "tmux list-clients -F '#{session_name}'" | grep -vc '^muxify-watch$')
 [ "$CLIENTS" = 0 ] || fail "the Host still has $CLIENTS Client(s) on Session $SESSION after Disconnect"
 echo "     Host Screen, and no Client left on the Host"
 

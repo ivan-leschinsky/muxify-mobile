@@ -603,9 +603,10 @@ of the Terminal and of the Host Screen, opens these settings. A Session pick use
 
 Windows shows the current Session's Windows. With a Topic, it shows the full
 title, Topic Note and Tags, then each live Session's Windows and Agent marks.
-The current Session uses its live Topology. The Attach reads the Topic when
-the chooser opens or returns from a form. A failed read keeps the last answer
-and offers Retry. A Window pick switches Session when needed and selects that
+The current Session uses its live Topology. While the Terminal Screen or the
+Web View shows the Topic, its Host Server pushes the Topic's detail, and the
+chooser draws each push. A Topic that is gone, or a failed push, keeps the
+last answer, says why and offers Retry. A Window pick switches Session when needed and selects that
 Window. Browser Tabs for the current Window appear below these rows.
 
 Topics shows the Host's Topics with the Bench open. A live Topic opens its

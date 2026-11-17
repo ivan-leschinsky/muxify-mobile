@@ -1,6 +1,6 @@
 /**
- * What `muxify topic show --json --topic <id>` says about one Topic, as the
- * Attach holds it. Sessions and Windows keep the order they came in,
+ * What the Host says about one Topic, in a Host Server's `topic` push or
+ * `muxify topic show --json --topic <id>`, as the Attach holds it. Sessions and Windows keep the order they came in,
  * which is the Mac's order.
  */
 
@@ -123,6 +123,9 @@ function strongest(marks: (AgentMark | null)[]): AgentMark | null {
 
 /** What one read of a Topic came to. */
 export type TopicRead = { kind: 'shown'; topic: TopicDetail } | { kind: 'failed'; error: string };
+
+/** What a screen says when the Host Server pushes that its Topic is gone. */
+export const TOPIC_GONE = 'This Topic no longer exists on the Host.';
 
 /**
  * The Topic read held by the Attach. A read in flight and a failed read both keep

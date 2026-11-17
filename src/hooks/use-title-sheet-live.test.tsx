@@ -1,0 +1,193 @@
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { Button, Text } from '@expo/ui/swift-ui';
+
+import { TitleSheet } from '@/components/title-sheet';
+import type { HostServer } from '@/ssh/host-server';
+import type { Attach, AttachState } from '@/tmux/attach';
+import { TOPIC_GONE, settledTopic, TOPIC_UNASKED, type TopicRead } from '@/topics/topic-detail';
+import type { TopicId } from '@/topics/environment';
+import { followHostTopic } from '@/topics/read-topic';
+
+import { useTitleSheet } from './use-title-sheet';
+
+/**
+ * The Title Sheet of an Attach with a Topic, through a fake Host Server: the
+ * real `topic` subscription and parser, the real hook and sheet. The Attach
+ * stands in for the real one, which settles each read the same way
+ * (`settledTopic`) and is tested on its own in `attach.test.ts`.
+ */
+
+let mockFocused = true;
+let mockServer: HostServer | null = null;
+
+jest.mock('expo-router', () => {
+  const React = require('react');
+  return {
+    useNavigation: () => ({ isFocused: () => mockFocused }),
+    useFocusEffect: (effect: () => (() => void) | void) => {
+      const focused = mockFocused;
+      React.useEffect(() => (focused ? effect() : undefined), [effect, focused]);
+    },
+  };
+});
+jest.mock('@expo/ui/swift-ui', () => ({
+  BottomSheet: 'BottomSheet', Button: 'Button', Divider: 'Divider', Group: 'Group', Host: 'Host',
+  HStack: 'HStack', Image: 'Image', Picker: 'Picker', ScrollView: 'ScrollView', Spacer: 'Spacer',
+  Text: 'Text', Toggle: 'Toggle', VStack: 'VStack', ZStack: 'ZStack',
+}));
+jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, {
+  get: (_, name) => name === 'shapes' ? { rectangle: () => 'rectangle' } : (value: unknown) => ({ name, value }),
+}));
+jest.mock('@/components/topic-marks', () => ({ MarkImage: 'MarkImage', TagMarks: () => null }));
+jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
+jest.mock('@/settings/settings-context', () => ({
+  useSettings: () => ({
+    appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark,
+    sheetPalette: require('@/constants/app-theme').sheetPaletteFor('ghostty'),
+  }),
+  useChooserLists: () => ['windows'],
+}));
+jest.mock('@/hooks/use-host-reading', () => ({
+  useHostReading: () => ({ topics: { kind: 'unasked' }, listing: { phase: 'idle' }, read: async () => {} }),
+}));
+jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn() }) }));
+jest.mock('@/browser/read-browser-tabs', () => ({ readBrowserTabs: async () => ({ kind: 'listed', tabs: [] }) }));
+jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => ({ current: () => null }) }));
+jest.mock('@osuki-dev/react-native-ssh', () => ({ connect: jest.fn() }));
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ hostServer: () => mockServer }) }));
+
+/** A live Host Server whose `topic` subscriptions the test pushes into. */
+function fakeServer() {
+  const subscriptions: { payload: object; onItem: (item: unknown) => void; cancelled: boolean }[] = [];
+  const server: HostServer = {
+    state: () => ({ kind: 'live', build: 'muxify 1', protocol: 1 }),
+    onState: () => () => {},
+    request: () => Object.assign(new Promise<unknown>(() => {}), { cancel: () => {} }),
+    subscribe: (payload, onItem) => {
+      const entry = { payload, onItem, cancelled: false };
+      subscriptions.push(entry);
+      return Object.assign(new Promise<unknown>(() => {}), { cancel: () => { entry.cancelled = true; } });
+    },
+    installAnswered: () => {},
+    close: () => {},
+  };
+  return {
+    server,
+    subscriptions,
+    push: (item: unknown) => act(async () => { subscriptions[subscriptions.length - 1]!.onItem(item); }),
+  };
+}
+
+/** An Attach in Topic `t`, on Session `game/ship`, whose `showTopic` follows the Topic on the Host Server. */
+function fakeAttach(): Attach {
+  const listeners = new Set<(state: AttachState) => void>();
+  let state = {
+    sessionName: 'game/ship',
+    topic: { id: 't' as TopicId, view: TOPIC_UNASKED },
+    topology: { windows: [{ id: '@2', index: 1, name: 'claude', active: true, paneCount: 1, command: 'claude' }], panes: [] },
+    sessions: [], previews: new Map(), typing: { kind: 'open' },
+  } as unknown as AttachState;
+  const settle = (read: TopicRead) => {
+    state = { ...state, topic: { id: state.topic!.id, view: settledTopic(state.topic!.view, read) } };
+    for (const listener of [...listeners]) listener(state);
+  };
+  return {
+    hostId: 'host',
+    state: () => state,
+    subscribe: (listener: (state: AttachState) => void) => {
+      listeners.add(listener);
+      listener(state);
+      return () => listeners.delete(listener);
+    },
+    showTopic: () => followHostTopic('host', 't' as TopicId, settle),
+    refreshTopic: () => {},
+    refreshTopology: () => {},
+    capturePreviews: () => {},
+  } as unknown as Attach;
+}
+
+function Screen({ attach }: { attach: Attach }) {
+  const [state, setState] = React.useState(() => attach.state());
+  React.useEffect(() => attach.subscribe(setState), [attach]);
+  const { sheet, openTitleSheet } = useTitleSheet({ attach, state, hostId: 'host', onOpenTab: () => {} });
+  React.useEffect(() => { openTitleSheet(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <TitleSheet {...sheet} />;
+}
+
+/** A Topic as the Host Server pushes it: one Session with one Window, whose Pane runs an Agent. */
+const topicItem = (label: string, window: string, status: string) => ({
+  topic: {
+    created_at: '2026-11-16T10:00:00Z', id: 't', label, note: null, slug: 'ship', state: 'live', tags: [], title: label,
+    sessions: [{
+      base_name: 'game', directory: '/work/game', id: '$1', name: 'game/ship', worktree: null,
+      windows: [{
+        active: true, id: '@2', index: 1, name: window,
+        panes: [{ active: true, agent: { conversation: null, kind: 'claude', status, unread: true }, command: 'claude',
+          id: '%3', index: 0, label: 'claude', path: '/work/game', window_id: '@2' }],
+      }],
+    }, {
+      base_name: 'app', directory: '/work/app', id: '$2', name: 'app', worktree: null,
+      windows: [{ active: true, id: '@5', index: 0, name: `${window} notes`, panes: [] }],
+    }],
+  },
+});
+
+let renderer: ReactTestRenderer;
+let fake: ReturnType<typeof fakeServer>;
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mockFocused = true;
+  fake = fakeServer();
+  mockServer = fake.server;
+});
+afterEach(async () => { await act(async () => renderer?.unmount()); });
+
+async function mount(attach = fakeAttach()) {
+  await act(async () => { renderer = create(<Screen attach={attach} />); });
+}
+const texts = () => renderer.root.findAllByType(Text).map((node) => node.props.children);
+const labels = () => renderer.root.findAllByType(Button).map((node) =>
+  node.props.modifiers?.find((modifier: { name: string }) => modifier.name === 'accessibilityLabel')?.value);
+const marks = () => renderer.root.findAllByType('MarkImage' as never).map((node) => (node.props as { mark: string }).mark);
+
+it("draws the Topic, its Windows and Agent marks from each push while the sheet is open", async () => {
+  await mount();
+  expect(fake.subscriptions.map((entry) => entry.payload)).toEqual([{ topic: { id: 't' } }]);
+
+  await fake.push(topicItem('Ship', 'claude', 'working'));
+  expect(texts()).toContain('Ship');
+  expect(labels()).toEqual(expect.arrayContaining(['Session game/ship', 'claude', 'Session app', 'claude notes']));
+  expect(marks()).toEqual(['working']);
+
+  await fake.push(topicItem('Ship it', 'review', 'blocked'));
+  expect(texts()).toContain('Ship it');
+  expect(texts()).not.toContain('Ship');
+  expect(labels()).toEqual(expect.arrayContaining(['review notes']));
+  expect(marks()).toEqual(['blocked']);
+  expect(fake.subscriptions).toHaveLength(1);
+});
+
+it('says that the Topic is gone on a null item', async () => {
+  await mount();
+  await fake.push(topicItem('Ship', 'claude', 'working'));
+  await fake.push(null);
+  expect(texts()).toContain(TOPIC_GONE);
+  expect(labels()).toContain('Retry');
+});
+
+it('ends the subscription when the screen stops showing the Topic', async () => {
+  await mount();
+  expect(fake.subscriptions[0].cancelled).toBe(false);
+  mockFocused = false;
+  await act(async () => renderer.update(<Screen attach={fakeAttach()} />));
+  expect(fake.subscriptions.every((entry) => entry.cancelled)).toBe(true);
+  expect(fake.subscriptions).toHaveLength(1);
+
+  mockFocused = true;
+  const attach = fakeAttach();
+  await act(async () => renderer.update(<Screen attach={attach} />));
+  expect(fake.subscriptions.map((entry) => entry.cancelled)).toEqual([true, false]);
+  await act(async () => renderer.unmount());
+  expect(fake.subscriptions.every((entry) => entry.cancelled)).toBe(true);
+});

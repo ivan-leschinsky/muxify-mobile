@@ -344,7 +344,7 @@ export default function TerminalScreen() {
   }, [router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
     onReplacingStopped: forgetLookup });
-  const { closeChooser, openTitleSheet, openSessionsOnly, topic, rereadTopic } = chooser;
+  const { closeChooser, openTitleSheet, openSessionsOnly, topic } = chooser;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
 
   const fontSize = fontSizeInForce(settings.fontSize);
@@ -1045,8 +1045,6 @@ export default function TerminalScreen() {
   const armModifier = useCallback((modifier: Modifier) => {
     setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
   }, []);
-
-  useFocusEffect(useCallback(() => { rereadTopic(); }, [rereadTopic]));
 
   /** The header's lines. Until a Topic read lands, a Topic's Session reads as a Session. */
   const headerTitle = useMemo((): HeaderTitle | null => {

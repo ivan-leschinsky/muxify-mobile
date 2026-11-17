@@ -223,7 +223,15 @@ export interface Attach {
   // The verbs the Options menu, the Key Row and the sheets need. Each
   // re-applies the Zoom preference and refreshes the Topology itself.
   switchSession(destination: SessionDestination): Promise<void>;
-  refreshTopic(): Promise<void>;
+  /**
+   * A screen shows the Topic: its header, the Title Sheet or both. While one
+   * does, the Attach holds a `topic` subscription on the Host Server and
+   * draws each push. Answers the way to stop showing it, which ends the
+   * subscription when no other screen shows the Topic.
+   */
+  showTopic(): () => void;
+  /** Follows the Topic again with a new subscription: the Title Sheet's Retry. */
+  refreshTopic(): void;
   selectWindow(index: number): Promise<void>;
   /**
    * Optimistic: moves the Pane here first and puts it back if refused.
@@ -326,7 +334,11 @@ export interface Attach {
 export interface AttachOptions {
   host: Host;
   destination: SessionDestination;
-  readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
+  /**
+   * Holds a `topic` subscription on the Host's Host Server until the answer
+   * is called, and hears each push as a read. See `followTopic`.
+   */
+  followTopic?: (hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void) => () => void;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
   /** The Theme's colours, for the Panes to report. Null reports nothing until coloursChanged. */
@@ -742,7 +754,6 @@ export function openAttach(options: AttachOptions): Attach {
    * each rewrites the whole records file and two at once would lose one of them.
    */
   let arrivalWrites = Promise.resolve();
-  let topicRevision = 0;
   let sessionRevision = 0;
   type PendingSwitch = {
     destination: SessionDestination;
@@ -761,7 +772,6 @@ export function openAttach(options: AttachOptions): Attach {
     }
     change({ sessionName: name });
     if (state.phase.kind === 'connected') arrived(name, state.topic?.id ?? null);
-    void refreshTopic();
   }
 
   /**
@@ -855,26 +865,52 @@ export function openAttach(options: AttachOptions): Attach {
   }
 
   function acceptDestination(destination: SessionDestination): void {
-    topicRevision += 1;
     const topic = destination.topic;
     const otherTopic = (topic?.id ?? null) !== (state.topic?.id ?? null);
     if (otherTopic) shownTab = null;
+    // The Topic followed now keeps its view: its subscription pushes each change.
+    const followed = topic !== null && !otherTopic && state.topic !== null && topicFeed?.id === topic.id;
     change({ ...(otherTopic ? { tabToRestore: null } : {}), sessionName: destination.sessionName, topic: topic
-      ? { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) }
+      ? (followed ? state.topic : { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) })
       : null });
+    followTopic();
     if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
   }
 
-  async function refreshTopic(): Promise<void> {
+  /** How many screens show the Topic now. Its detail is followed only while one does. */
+  let topicShown = 0;
+  /** The `topic` subscription held now: for which Topic, and on which Connection. */
+  let topicFeed: { id: TopicId; generation: number; stop: () => void } | null = null;
+
+  /**
+   * Holds a `topic` subscription while a screen shows the Topic of a
+   * connected Attach, and ends it otherwise. `again` ends the one held and
+   * starts a new one. Each push settles the Topic's view; a push for a
+   * subscription that has ended is dropped.
+   */
+  function followTopic(again = false): void {
     const topic = state.topic;
-    if (!topic || !options.readTopic || closed) return;
-    const revision = ++topicRevision;
+    const wanted = !closed && topic !== null && topicShown > 0 && options.followTopic !== undefined &&
+      state.phase.kind === 'connected';
+    if (wanted && !again && topicFeed?.id === topic.id && topicFeed.generation === generation) return;
+    const held = topicFeed;
+    topicFeed = null;
+    held?.stop();
+    if (!wanted || !options.followTopic) return;
+    const feed = { id: topic.id, generation, stop: () => {} };
+    topicFeed = feed;
+    say(`following Topic ${topic.id}`);
     change({ topic: { ...topic, view: loadingTopic(topic.view) } });
-    let read: TopicRead;
-    try { read = await options.readTopic(host.id, topic.id); }
-    catch (error) { read = { kind: 'failed', error: describeError(error) }; }
-    if (closed || revision !== topicRevision || state.topic?.id !== topic.id) return;
-    change({ topic: { id: topic.id, view: settledTopic(state.topic.view, read) } });
+    const stop = options.followTopic(host.id, topic.id, (read) => {
+      if (topicFeed !== feed || state.topic?.id !== feed.id) return;
+      change({ topic: { id: feed.id, view: settledTopic(state.topic.view, read) } });
+    });
+    if (topicFeed === feed) feed.stop = stop;
+    else stop();
+  }
+
+  function refreshTopic(): void {
+    followTopic(true);
   }
 
   // ------------------------------------------------------------- Pane colours
@@ -1083,7 +1119,7 @@ export function openAttach(options: AttachOptions): Attach {
       // tapped: the Host Screen's order is a record of where you have been,
       // and a Session that refused to attach is not somewhere you have been.
       arrived(state.sessionName, state.topic?.id ?? null);
-      void refreshTopic();
+      followTopic();
 
       // Size first, so the capture that follows is of a Pane the size of the
       // Surface rather than of whatever the last Client left it.
@@ -1228,6 +1264,7 @@ export function openAttach(options: AttachOptions): Attach {
     void teardown();
     connection = null;
     change({ phase, step: 'connecting' });
+    followTopic();
     void connect();
   }
 
@@ -1346,6 +1383,18 @@ export function openAttach(options: AttachOptions): Attach {
 
     refreshTopic,
 
+    showTopic(): () => void {
+      topicShown += 1;
+      followTopic();
+      let shown = true;
+      return () => {
+        if (!shown) return;
+        shown = false;
+        topicShown -= 1;
+        followTopic();
+      };
+    },
+
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
@@ -1357,7 +1406,6 @@ export function openAttach(options: AttachOptions): Attach {
         if (destination.sessionName === state.sessionName) return;
         const topic = state.topic && lastTopic(state.topic.view);
         if (state.topic && !topic) {
-          void refreshTopic();
           throw new Error('The current Topic has not loaded. Retry after it loads.');
         }
         if (topic?.sessions.some((session) => session.name === destination.sessionName)) {
@@ -1367,7 +1415,6 @@ export function openAttach(options: AttachOptions): Attach {
       if (destination.sessionName === state.sessionName) {
         pendingRestore = restore;
         acceptDestination(destination);
-        void refreshTopic();
         if (state.phase.kind === 'connected') await restorePlace(generation);
         return;
       }
@@ -1395,7 +1442,6 @@ export function openAttach(options: AttachOptions): Attach {
         const completedAt = sessionRevision;
         topology?.attachedTo(currentSessionTarget());
         sizing.sessionSwitched();
-        void refreshTopic();
         try { await settleAfterVerb(mine); }
         catch (error) { if (!stale(mine)) change({ trouble: describeError(error) }); }
         if (stale(mine) || client !== current) throw new Error('The Attach changed before the Session opened.');
@@ -1692,6 +1738,7 @@ export function openAttach(options: AttachOptions): Attach {
       verbs.close();
       composer.dispose();
       generation += 1;
+      followTopic();
       sizing.dispose();
       onScreen.clear();
       listeners.clear();

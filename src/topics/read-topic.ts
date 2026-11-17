@@ -1,6 +1,7 @@
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { describeConnectionFailure } from '@/ssh/connect-host';
+import { followTopic } from '@/ssh/topic-feed';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 
@@ -12,7 +13,7 @@ const say = speakingAs(deviceLog(), 'topic');
 /**
  * One read of a Topic from its Host, on the Host's Connection.
  *
- * The Attach and the Topic entry path ask this. It
+ * The Topic entry path asks this. It
  * never throws: a Host that is no longer saved, a Host that refuses and a
  * Topic the Host cannot show are each a failed read that carries its reason.
  */
@@ -34,4 +35,18 @@ export async function readTopic(hostId: string, topicId: TopicId): Promise<Topic
     say(`${host.displayName} refused the Topic: ${message}`);
     return { kind: 'failed', error: message };
   }
+}
+
+/**
+ * The Attach's `topic` subscription, on the Host Server of the Host's open
+ * Connection, until the answer is called. With no Host Server on that
+ * Connection there is no Topic detail, and the read fails with the reason.
+ */
+export function followHostTopic(hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void): () => void {
+  const server = appConnections().hostServer(hostId);
+  if (!server) {
+    onRead({ kind: 'failed', error: 'Topics are unavailable on this Host: no Host Server runs on its Connection.' });
+    return () => {};
+  }
+  return followTopic(server, topicId, onRead, (line) => say(`Host Server: ${line}`));
 }
