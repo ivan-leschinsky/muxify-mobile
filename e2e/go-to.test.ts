@@ -6,6 +6,8 @@
  *   pnpm e2e:go-to
  *
  * It needs a `muxify` with the `session-paths` capability first on the PATH.
+ * The ranked rows, a Topic's rows and the visits go through the Host Server:
+ * `pnpm e2e:host-server` runs them against a real `muxify server`.
  *
  * Every command runs against a Muxify of its own, as in e2e/topics.test.ts:
  * its records, its Config and its tmux server live in a temp folder, which is
@@ -80,15 +82,5 @@ describe('Go to against the real muxify', () => {
 
   it('gives the next free name to a second Session at the folder', async () => {
     expect(await cli.newSession(exec, folder, 'e2e-go-to', newRequestId())).toEqual({ kind: 'added', session: 'e2e-go-to+2' });
-  });
-
-  it('records a visit, and refuses one of a folder that is not there', async () => {
-    expect(await cli.visit(exec, folder, newRequestId())).toEqual({ kind: 'changed' });
-    expect(await cli.visit(exec, join(root, 'missing'), newRequestId())).toMatchObject({ kind: 'failed' });
-  });
-
-  it('reads the ranked Session Paths, with and without text', async () => {
-    expect(await cli.rankedSessionPaths(exec, '')).toMatchObject({ kind: 'listed' });
-    expect(await cli.rankedSessionPaths(exec, "go's")).toMatchObject({ kind: 'listed' });
   });
 });

@@ -223,7 +223,7 @@ export async function newSession(
  * The folder with a leading `~` made the Host's home, which one exec of the
  * Host's shell gives. Any other folder is as it was given.
  */
-async function onHost(host: Host, folder: string): Promise<string> {
+export async function onHost(host: Host, folder: string): Promise<string> {
   if (folder !== '~' && !folder.startsWith('~/')) return folder;
   const home = await appConnections().read(host, async (transport) => (await transport.exec('printf %s "$HOME"')).stdout.trim());
   if (!home.startsWith('/')) throw new Error(`Could not find the home folder of ${host.displayName}.`);

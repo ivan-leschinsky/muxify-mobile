@@ -11,7 +11,6 @@ import type { TopicChange, TopicWrite } from './topic-edit';
 import { topicActionCommand, type TopicAction } from './topic-action';
 import { dropCommand, type Drop } from './topic-drop';
 import { REQUEST_CAPABILITY, REQUEST_MISMATCH_ERROR, RequestUnanswered, type RequestId, type UnknownOutcome } from './request';
-import { parseSessionPathRows, parseSessionPaths, type RankedPathsRead, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
 
@@ -52,8 +51,6 @@ const REQUEST_IN_DOUBT = 4;
 const CHANGE_USAGE_ERROR =
   'muxify on this Host did not take this. It reads a value that starts with - as an option, and an old muxify does not have this command.';
 
-/** The write that records a visit of a folder. It answers `{"visited":{…}}`, which the phone does not read. */
-const VISIT_VERB = 'session-paths visit';
 
 /**
  * Each write takes a Request id, which the caller makes when the user starts
@@ -127,16 +124,6 @@ export interface MuxifyCli {
    */
   addSession(exec: Exec, topic: TopicId, folder: string, request: RequestId, name?: string): Promise<AddSessionRead>;
 
-  sessionPaths(exec: Exec, topic: TopicId): Promise<SessionPathsRead>;
-
-  /**
-   * The Session Paths and Worktrees of the Host, with no Topic:
-   * `session-paths --json`. The Host ranks them: for `query` with the Mac's
-   * match, and with no query by last visit, newest first. Only a Host CLI
-   * with the `session-paths` capability has the command.
-   */
-  rankedSessionPaths(exec: Exec, query: string): Promise<RankedPathsRead>;
-
   /**
    * Makes a Session in no Topic at a folder on the Host: `session new`. The
    * Host gives it `name`, or `name+2` and so on when a Session has the name.
@@ -152,11 +139,6 @@ export interface MuxifyCli {
    */
   addWorktreeSession(exec: Exec, topic: TopicId, folder: string, request: RequestId): Promise<AddSessionRead>;
 
-  /**
-   * Tells the Host that the user opened a Session at this folder, so the Mac
-   * and the phone rank it by one last visit.
-   */
-  visit(exec: Exec, folder: string, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Makes the remembered Sessions, Windows, Tabs and Agents of a Dormant or
@@ -384,16 +366,6 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
 
     startTopicFresh: (exec, topic, request) => writeTopic(exec, 'topic start-fresh', topic, request),
 
-    async sessionPaths(exec, topic) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: NO_MUXIFY };
-      const result = await exec(`${shellQuote(path)} topic session-paths --topic ${shellQuote(topic)} --json`);
-      if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
-      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, (json) => parseSessionPaths(json, topic));
-      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', choices: parsed.value };
-    },
-
     addSession: (exec, topic, folder, request, name) => makeSession(
       exec,
       `topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
@@ -412,18 +384,6 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       `session new ${folderArgument(folder)} --name ${shellQuote(name)} --json`,
       request,
     ),
-
-    visit: (exec, folder, request) => writeChange(exec, `${VISIT_VERB} ${folderArgument(folder)} --json`, request),
-
-    async rankedSessionPaths(exec, query) {
-      const text = query.trim();
-      const parsed = await answerTo(
-        exec,
-        `session-paths${text === '' ? '' : ` --query ${shellQuote(text)}`} --json`,
-        parseSessionPathRows,
-      );
-      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', rows: parsed.value };
-    },
 
     async browserTabs(exec, window) {
       const parsed = await answerTo(exec, `browser tabs --window ${shellQuote(window)} --json`, parseBrowserTabs);

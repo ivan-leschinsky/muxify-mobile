@@ -1,7 +1,7 @@
 import type { TopicId } from './environment';
 import { array, object, string } from './json-shape';
 
-/** What every Session Path row of the Host CLI says: a Session Path, or a Worktree of one. */
+/** What every Session Path row of the Host Server says: a Session Path, or a Worktree of one. */
 interface SessionPathFields {
   kind: 'session_path' | 'worktree';
   name: string;
@@ -11,23 +11,18 @@ interface SessionPathFields {
   alsoIn: { id: string; label: string }[];
 }
 
-/** A row of `topic session-paths`: a folder choice for one Topic. */
+/** A row of `session_paths { topic }`: a folder choice for one Topic. */
 export interface SessionPathChoice extends SessionPathFields {
   inThisTopic: boolean;
 }
 
-/** A row of `session-paths`, which has no Topic. `lastVisit` is ISO 8601, or null for a folder never visited. */
+/** A row of `session_paths` with no Topic. `lastVisit` is ISO 8601, or null for a folder never visited. */
 export interface SessionPathRow extends SessionPathFields {
   lastVisit: string | null;
 }
 
-export type SessionPathsRead =
-  | { kind: 'listed'; choices: SessionPathChoice[] }
-  | { kind: 'old' }
-  | { kind: 'failed'; error: string };
-
-/** What one `session-paths` came to. The rows keep the order the Host ranked them in. */
-export type RankedPathsRead = { kind: 'listed'; rows: SessionPathRow[] } | { kind: 'failed'; error: string };
+/** What the read of a Topic's folder choices came to. */
+export type SessionPathsRead = { kind: 'listed'; choices: SessionPathChoice[] } | { kind: 'failed'; error: string };
 
 export interface SessionPathSection {
   id: 'in-topic' | 'paths' | 'worktrees';
@@ -47,7 +42,7 @@ export function parseSessionPaths(json: unknown, expectedTopic: TopicId): Sessio
   });
 }
 
-/** The rows of `session-paths --json`, in the order they came: the Host ranked them. */
+/** The rows of a `session_paths` answer, in the order they came: the Host ranked them. */
 export function parseSessionPathRows(json: unknown): SessionPathRow[] {
   return array(object(json, 'session paths').rows, 'rows').map((value, index) => {
     const at = `rows[${index}]`;
@@ -56,7 +51,7 @@ export function parseSessionPathRows(json: unknown): SessionPathRow[] {
   });
 }
 
-/** The rows as `session-paths --json` gives them, so that the phone's copy is read back by the same parse. */
+/** The rows as `session_paths` gives them, so that the phone's copy is read back by the same parse. */
 export function sessionPathRowsJson(rows: readonly SessionPathRow[]): unknown {
   return {
     rows: rows.map((row) => ({

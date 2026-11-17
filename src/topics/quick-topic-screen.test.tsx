@@ -6,6 +6,7 @@ import NewTopicScreen from '@/app/new-topic';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
 import { fakeHostServer, lost, refused, snapshotPush, topicPush } from '@/test-support/fake-host-server';
 import { toolbarButton, toolbarSide } from '@/test-support/toolbar';
+import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
@@ -43,13 +44,13 @@ jest.mock('@/storage/device-store', () => ({
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/attach-context', () => ({ useOpenSession: () => mockOpen }));
 jest.mock('@/tmux/ssh-connection', () => {
-  const muxify = () => ({ read: mockRead, rankedSessionPaths: mockPaths, visit: mockVisit });
+  const muxify = () => ({ read: mockRead });
   const exec = async (command: string) => ({ stdout: command.includes('$HOME') ? '/Users/me\n' : '', stderr: '', exitCode: 0 });
   const work = (_host: unknown, run: Function) => run({ exec }, muxify());
   return { appConnections: () => ({ read: work, write: work, onServer: mockServer.onServer }) };
 });
 
-const path = (name: string, directory: string) => ({ kind: 'session_path', name, label: name, directory, worktree: null, alsoIn: [], lastVisit: null });
+const path = (name: string, directory: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory, worktree: null, alsoIn: [], lastVisit: null });
 let renderer: ReactTestRenderer;
 beforeEach(() => {
   jest.clearAllMocks();
@@ -62,9 +63,12 @@ beforeEach(() => {
     return 'create' in command ? mockCreate(command.create) : mockAdd(command.add_session);
   };
   mockCreate.mockResolvedValue({ changed: { created: true, topic_id: 'new' } });
-  mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('mobile', '/work/muxify mobile'), path('api', '/work/api')] });
+  // The Host's ranked rows for each `session_paths`, and the visits it records.
+  mockServer.on.session_paths = async (asked) => sessionPathRowsJson(await mockPaths(asked));
+  mockServer.on.visit_session_path = mockVisit;
+  mockPaths.mockResolvedValue([path('mobile', '/work/muxify mobile'), path('api', '/work/api')]);
   mockAdd.mockResolvedValue({ changed: { session_name: 'mobile/quick-topic' } });
-  mockVisit.mockResolvedValue({ kind: 'changed' });
+  mockVisit.mockResolvedValue({});
   mockOpen.mockResolvedValue(undefined);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -115,7 +119,7 @@ describe('the title step', () => {
   it('reads the folders when the sheet opens, before the title is sent', async () => {
     await mount('Quick topic');
 
-    expect(mockPaths).toHaveBeenCalledWith(expect.any(Function), '');
+    expect(mockPaths).toHaveBeenCalledWith({});
   });
 
   it('stays on the title with the reason when the Host refuses, and creates on Retry', async () => {
@@ -158,7 +162,7 @@ describe('the Add a Session step', () => {
       hostId: 'host',
       destination: { sessionName: 'mobile/quick-topic', topic: expect.objectContaining({ id: 'new' }) },
     }));
-    expect(mockVisit).toHaveBeenCalledWith(expect.any(Function), '/work/muxify mobile', expect.any(String));
+    expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/muxify mobile' });
     expect(mockRouter.dismissTo).toHaveBeenCalledWith('/terminal');
   });
 
@@ -171,9 +175,9 @@ describe('the Add a Session step', () => {
   });
 
   it('adds the Session in a new Worktree for ⌥↩ and for the item of the long-press menu', async () => {
-    mockPaths.mockResolvedValue({ kind: 'listed', rows: [
+    mockPaths.mockResolvedValue([
       { ...path('mobile', '/work/muxify mobile'), worktree: { path: '/work/muxify mobile', branch: 'main' } },
-    ] });
+    ]);
     await toAddSession();
     await act(async () => { mockKeys['list-worktree']!(); });
 
@@ -185,7 +189,7 @@ describe('the Add a Session step', () => {
   });
 
   it('uses a folder the user typed, named as the Host names a Session Path', async () => {
-    mockPaths.mockResolvedValue({ kind: 'listed', rows: [] });
+    mockPaths.mockResolvedValue([]);
     await toAddSession();
     await act(async () => { field().props.onTextChange('~/Dev/new app'); });
     await act(async () => { folder('~/Dev/new app').props.onPress(); });

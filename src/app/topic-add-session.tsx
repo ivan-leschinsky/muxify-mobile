@@ -27,12 +27,12 @@ import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
 import type { TopicId } from '@/topics/environment';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
 import { topicSeedFromParam } from '@/topics/topic-detail';
 import { freeSessionName } from '@/topics/add-session';
+import { topicSessionPaths } from '@/topics/host-session-paths';
 import { addSession, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { sessionPathSections, type SessionPathsRead } from '@/topics/session-paths';
@@ -80,9 +80,8 @@ export default function TopicAddSessionScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) =>
-        muxify.sessionPaths((command) => transport.exec(command), topicId as TopicId));
-      if (settled()) setPaths(result);
+      const choices = await topicSessionPaths(host, topicId as TopicId);
+      if (settled()) setPaths({ kind: 'listed', choices });
     })().catch((caught) => {
       if (settled()) setPaths({ kind: 'failed', error: describeConnectionFailure(caught) });
     });
@@ -206,14 +205,14 @@ export default function TopicAddSessionScreen() {
             <Text>{`Selected folder: ${selectedFolder}`}</Text>
           </Section>}
           <Section
-            header={<SectionHeader palette={palette}>{paths.kind === 'old' ? 'Folder on the Host' : 'Search or enter a folder'}</SectionHeader>}
+            header={<SectionHeader palette={palette}>Search or enter a folder</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <TextField
               text={folder}
               onTextChange={(value) => { setQuery(value); setSelectedFolder(null); }}
-              placeholder={paths.kind === 'old' ? '~/Dev/project' : 'Search folders or type a path'}
+              placeholder="Search folders or type a path"
               modifiers={[
-                accessibilityLabel(paths.kind === 'old' ? 'Folder' : 'Search folders'),
+                accessibilityLabel('Search folders'),
                 textInputAutocapitalization('never'),
                 autocorrectionDisabled(),
                 disabled(!choosing),
@@ -245,7 +244,7 @@ export default function TopicAddSessionScreen() {
               </VStack>
             </Button>)}
           </Section>)}
-          {paths.kind !== 'old' && query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+          {query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
             <Button label={`Use ${query.trim()}`} onPress={() => choose(query.trim())} modifiers={[disabled(!choosing)]} />
           </Section>}
 

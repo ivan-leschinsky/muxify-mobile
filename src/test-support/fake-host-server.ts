@@ -12,17 +12,21 @@ export interface SentWrite {
 /**
  * A live Host Server for screen tests. Each request is kept and answered by
  * `answer`, which a test sets: what it returns is the `ok` of the `end`, and
- * what it throws ends the request with that error. A subscription's first item
- * is what `pushes` holds for its kind (`snapshot`, `topic`).
+ * what it throws ends the request with that error. A request whose case is in
+ * `on` (`session_paths`, `visit_session_path`) is answered there instead, with
+ * the case's own payload. A subscription's first item is what `pushes` holds
+ * for its kind (`snapshot`, `topic`).
  *
  * `onServer` is the part of the Connections that the Host Writes use.
  */
 export function fakeHostServer() {
   const requests: object[] = [];
   const pushes: Record<string, unknown> = {};
+  const on: Record<string, (value: unknown) => unknown> = {};
   const fake = {
     requests,
     pushes,
+    on,
     answer: ((): unknown => ({ changed: {} })) as (payload: Record<string, unknown>) => unknown,
     server: null as unknown as HostServer,
     onServer: <T,>(_host: unknown, work: (server: HostServer) => Promise<T>) => work(fake.server),
@@ -35,7 +39,10 @@ export function fakeHostServer() {
     onState: () => () => {},
     request: (payload) => {
       requests.push(payload);
-      return callOf(Promise.resolve().then(() => fake.answer(payload as Record<string, unknown>)));
+      const [kind] = Object.keys(payload);
+      const each = kind === undefined ? undefined : on[kind];
+      return callOf(Promise.resolve().then(() =>
+        each ? each((payload as Record<string, unknown>)[kind!]) : fake.answer(payload as Record<string, unknown>)));
     },
     subscribe: (payload, onItem) => {
       const [kind] = Object.keys(payload);

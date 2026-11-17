@@ -10,6 +10,7 @@ import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { EnvironmentSnapshot, SessionId, TopicId } from '@/topics/environment';
 import type { HostTopics } from '@/topics/host-topics';
+import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockRouter = { push: jest.fn() };
 const mockRemember = jest.fn();
@@ -82,11 +83,7 @@ jest.mock('@/tmux/attach-context', () => ({
   useAttachState: () => null,
   useOpenSession: () => mockOpen,
 }));
-jest.mock('@/tmux/ssh-connection', () => {
-  const work = (_host: unknown, run: Function) =>
-    run({ exec: jest.fn() }, { rankedSessionPaths: mockPaths, visit: mockVisit });
-  return { appConnections: () => ({ read: work, write: work, onServer: mockServer.onServer }) };
-});
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 
 const sid = (id: string) => id as SessionId;
 const tid = (id: string) => id as TopicId;
@@ -104,7 +101,7 @@ const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
   unpinned: { limit: 3, places: [topicCard('t1', 'Fix login')], guests: [], bench: [] },
   no_topic: [sid('$1')],
 });
-const path = (name: string) => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
+const path = (name: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
 async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot([]) }) {
@@ -123,10 +120,13 @@ beforeEach(() => {
   mockSettings = {};
   mockKeys = {};
   mockFocused = true;
-  mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('api'), path('web')] });
+  mockPaths.mockResolvedValue([path('api'), path('web')]);
   mockServer = fakeHostServer();
   mockServer.answer = (payload) => ({ changed: { session_name: newSessionOf(payload)?.name } });
-  mockVisit.mockResolvedValue({ kind: 'changed' });
+  // The Host's ranked rows for each `session_paths`, and the visits it records.
+  mockServer.on.session_paths = async (asked) => sessionPathRowsJson(await mockPaths(asked));
+  mockServer.on.visit_session_path = mockVisit;
+  mockVisit.mockResolvedValue({});
   mockOpen.mockResolvedValue(undefined);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -231,16 +231,25 @@ describe('Go to', () => {
     expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
   });
 
+  it('asks the Host Server for the folders of an empty field, and draws them in its order after the running Sessions', async () => {
+    mockPaths.mockResolvedValue([path('web'), path('api')]);
+    await mount();
+    await focusGoTo();
+
+    expect(mockPaths).toHaveBeenCalledWith({});
+    expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/web', 'Folder /work/api']);
+  });
+
   it('matches the running Sessions by the text in the field, and asks the Host for the folders', async () => {
     jest.useFakeTimers();
     await mount();
     await focusGoTo();
-    mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('web')] });
+    mockPaths.mockResolvedValue([path('web')]);
     await type('login');
     await act(async () => { jest.runAllTimers(); });
     jest.useRealTimers();
 
-    expect(mockPaths).toHaveBeenLastCalledWith(expect.any(Function), 'login');
+    expect(mockPaths).toHaveBeenLastCalledWith({ query: 'login' });
     expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api/fix-login', 'Folder /work/web']);
   });
 
@@ -262,7 +271,7 @@ describe('Go to', () => {
 
     expect(mockOpenSession).toHaveBeenCalledWith('api');
     expect(newSessions()).toEqual([]);
-    expect(mockVisit).toHaveBeenCalledWith(expect.any(Function), '/work/api', expect.any(String));
+    expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/api' });
   });
 
   it('makes a Session at a folder where none runs, opens it, and records the visit', async () => {
@@ -272,7 +281,7 @@ describe('Go to', () => {
 
     expect(newSessions()).toEqual([{ directory: '/work/web', name: 'web' }]);
     expect(mockOpen).toHaveBeenCalledWith(expect.objectContaining({ destination: { sessionName: 'web', topic: null } }));
-    expect(mockVisit).toHaveBeenCalledWith(expect.any(Function), '/work/web', expect.any(String));
+    expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/web' });
     expect(mockRouter.push).toHaveBeenCalledWith('/terminal');
   });
 

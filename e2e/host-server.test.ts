@@ -16,14 +16,15 @@
  * way e2e/topics.test.ts and e2e/sandbox.sh do it.
  */
 import { execFile, spawn, type ChildProcess } from 'child_process';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 
 import { createHostServer, HostServerError, type HostServer, type HostServerState, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import { shellQuote } from '@/tmux/commands';
 import type { TopicId } from '@/topics/environment';
-import { environmentRequest, firstPush, sendEnvironment, type EnvironmentCommand } from '@/topics/host-write-request';
+import { rankedSessionPaths, topicSessionPaths } from '@/topics/host-session-paths';
+import { environmentRequest, firstPush, sendEnvironment, type EnvironmentCommand, type ServerConnections } from '@/topics/host-write-request';
 import {
   actionCommand,
   addSessionCommand,
@@ -52,6 +53,7 @@ const env = {
   XDG_STATE_HOME: join(root, 'state'),
   TMUX_TMPDIR: root,
 };
+const projects = join(root, 'projects');
 
 function runInShell(command: string): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((done, fail) => {
@@ -98,7 +100,9 @@ function until(server: HostServer, kinds: HostServerState['kind'][]): Promise<Ho
 
 beforeAll(async () => {
   if (!existsSync(MUXIFY)) throw new Error(`no Host CLI at ${MUXIFY}: run (cd ../muxify-shell && make host-cli)`);
-  await runInShell(`printf 'topics:\\n  tags:\\n    work: {}\\n' > ${shellQuote(env.MUXIFY_CONFIG)}`);
+  // The folders under projects are the Session Paths of this Muxify.
+  mkdirSync(projects);
+  await runInShell(`printf 'topics:\\n  tags:\\n    work: {}\\nsessions:\\n  paths:\\n    - path: %s/*\\n' ${shellQuote(projects)} > ${shellQuote(env.MUXIFY_CONFIG)}`);
   await runInShell('tmux -f /dev/null new-session -d -s 0');
 });
 
@@ -230,4 +234,46 @@ describe('the Host Server link against a real muxify server', () => {
 
     server.close();
   }, 60_000);
+
+  it('ranks Session Paths for Go to, lists a Topic\'s folder choices, and records a visit', async () => {
+    const server = startServer();
+    await until(server, ['live']);
+    const folder = join(projects, "go to's folder");
+    mkdirSync(folder);
+    mkdirSync(join(projects, 'another'));
+    expect((await runInShell(`${shellQuote(MUXIFY)} session-paths refresh`)).exitCode).toBe(0);
+    try {
+      await goToRows(server, folder);
+    } finally {
+      server.close();
+    }
+  }, 60_000);
 });
+
+/** Go to's rows and visits, and Add a Session's rows, on one live Host Server. */
+async function goToRows(server: HostServer, folder: string) {
+  const HOST = { id: 'sandbox', displayName: 'Sandbox' } as Host;
+  const connections: ServerConnections = { onServer: (_host, work) => work(server) };
+
+  // A visit ranks the folder first for an empty field; a folder that is not there is refused.
+  await expect(server.request({ visit_session_path: { folder } })).resolves.toEqual({});
+  await expect(server.request({ visit_session_path: { folder: join(root, 'missing') } })).rejects.toBeInstanceOf(HostServerError);
+  const ranked = await rankedSessionPaths(HOST, '', connections);
+  expect(ranked.map((row) => row.directory)).toEqual(expect.arrayContaining([folder, join(projects, 'another')]));
+  expect(ranked[0]).toMatchObject({ directory: folder, lastVisit: expect.any(String) });
+  // Text is ranked by the Host's match.
+  const matched = await rankedSessionPaths(HOST, 'anoth', connections);
+  expect(matched[0]).toMatchObject({ directory: join(projects, 'another') });
+
+  // A Topic's rows name the Topic, and say which folders are in it.
+  const request = newRequestId();
+  await sendEnvironment(HOST, { command: createCommand('Live Go to', []), request }, () => {}, connections);
+  const topic = request as unknown as TopicId;
+  const add = addSessionCommand({ directory: folder, worktree: null }, { chosenName: 'goto' });
+  if ('error' in add) throw new Error(String(add.error));
+  await expect(server.request(environmentRequest({ command: add, topic, request: newRequestId() })))
+    .resolves.toMatchObject({ changed: expect.anything() });
+  const choices = await topicSessionPaths(HOST, topic, connections);
+  expect(choices).toContainEqual(expect.objectContaining({ directory: folder, inThisTopic: true }));
+  expect(choices).toContainEqual(expect.objectContaining({ directory: join(projects, 'another'), inThisTopic: false }));
+}

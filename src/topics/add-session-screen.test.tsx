@@ -5,7 +5,6 @@ import { fakeHostServer, lost, refused, snapshotPush, topicPush } from '@/test-s
 import { toolbarSide } from '@/test-support/toolbar';
 
 import TopicAddSessionScreen from '@/app/topic-add-session';
-import type { SessionPathsRead } from './session-paths';
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
@@ -39,8 +38,9 @@ jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => mockHolder, u
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ read: mockRead, onServer: mockServer.onServer }) }));
 jest.mock('@/ssh/connect-host', () => ({ describeConnectionFailure: (value: Error) => value.message }));
 
-const listed: SessionPathsRead = { kind: 'listed', choices: [
-  { kind: 'session_path', name: 'project', label: 'Project', directory: ' /exact folder/ ', worktree: null, inThisTopic: true, alsoIn: [] },
+/** The `ok` of `session_paths { topic }`: the Topic's folder choices, as the Host Server gives them. */
+const listed = { topic: { id: 'topic', label: 'Fix login' }, sessions: [], rows: [
+  { kind: 'session_path', name: 'project', label: 'Project', directory: ' /exact folder/ ', worktree: null, in_this_topic: true, also_in: [], last_visit: null },
 ] };
 let renderer: ReactTestRenderer;
 
@@ -49,8 +49,9 @@ beforeEach(() => {
   mockCreated = undefined;
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Host' }] });
   mockPaths.mockResolvedValue(listed);
-  mockRead.mockImplementation((_host, read) => read({ exec: home }, { sessionPaths: mockPaths }));
+  mockRead.mockImplementation((_host, read) => read({ exec: home }));
   mockServer = fakeHostServer();
+  mockServer.on.session_paths = mockPaths;
   // The `ok` of each `add_session`, or the error it ends with.
   mockServer.answer = (payload) => mockAdd((payload as { environment: { command: { add_session: unknown } } }).environment.command.add_session);
   mockServer.pushes.snapshot = snapshotPush();
@@ -77,6 +78,13 @@ async function type(value: string) {
     field.props.onTextChange(value);
   });
 }
+
+it('asks the Host Server for the folder choices of the Topic, and lists them', async () => {
+  await mount();
+
+  expect(mockServer.requests).toEqual([{ session_paths: { topic: 'topic' } }]);
+  expect(row().props.modifiers).toContainEqual({ name: 'accessibilityLabel', value: 'Select folder  /exact folder/ ' });
+});
 
 it('selects without a write, then creates once and reuses the Session after Attach fails', async () => {
   let finish!: (value: unknown) => void;
@@ -115,7 +123,7 @@ it('allows a deliberate new folder attempt after a refused write', async () => {
 });
 
 it('keeps typed entry last and available after a read failure', async () => {
-  mockPaths.mockResolvedValue({ kind: 'failed', error: 'read failed' });
+  mockPaths.mockRejectedValue(refused('read failed', 'config_invalid'));
   await mount();
   await type('  ~/folder with spaces  ');
   const buttons = renderer.root.findAllByType(Button);
@@ -128,28 +136,26 @@ it('keeps typed entry last and available after a read failure', async () => {
 });
 
 it('ignores a late read after a successful write', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await type('/typed');
   await act(async () => { renderer.root.findByType(Button).props.onPress(); });
   await submit();
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(right().props.children).toBe('Retry Attach');
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
   expect(mockAdd).toHaveBeenCalledTimes(1);
 });
 
-it('preserves typed text when an old CLI answers and requires Create and open', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+it('preserves typed text when the folder choices arrive', async () => {
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await type('~/typed');
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(renderer.root.findByType(TextField).props.text.value).toBe('~/typed');
   expect(right().props.children).toBe('Create and open');
-  await act(async () => { right().props.onPress(); });
-  expect(mockAdd.mock.calls[0][0].directory).toBe('/Users/me/typed');
 });
 
 it('does not act on a row callback after Cancel', async () => {
@@ -161,8 +167,8 @@ it('does not act on a row callback after Cancel', async () => {
 });
 
 it('ignores a read after the sheet unmounts', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { renderer.unmount(); finish(listed); });
   expect(mockAdd).not.toHaveBeenCalled();
@@ -170,11 +176,11 @@ it('ignores a read after the sheet unmounts', async () => {
 });
 
 it('ignores a read after Cancel before the sheet unmounts', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { left().props.onPress(); });
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
   expect(right().props.disabled).toBe(true);
 });
