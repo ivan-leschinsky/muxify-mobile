@@ -12,7 +12,7 @@ wait "label=\"Search folders\"" 15000
 fill "role=text-field" "/tmp/muxify e2e missing"
 press "label=\"Use /tmp/muxify e2e missing\""
 press "label=\"Create and open\""
-wait "text" "no directory" 15000
+wait "text" "No launch directory is available" 15000
 is "visible" "role=text-field"
 fill "role=text-field" "/tmp/muxify e2e add"
 press "label=\"Use /tmp/muxify e2e add\""

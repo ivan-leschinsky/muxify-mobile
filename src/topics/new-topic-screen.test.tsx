@@ -2,12 +2,13 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, TextField } from '@expo/ui/swift-ui';
 import TopicFormScreen from '@/app/topic-form';
-import { ExecDeadlineError } from '@/ssh/host-connections';
+import { fakeHostServer, inDoubt, lost, refused, snapshotPush } from '@/test-support/fake-host-server';
 import { toolbarButton } from '@/test-support/toolbar';
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
 const mockCreate = jest.fn();
+let mockServer = fakeHostServer();
 const mockReplace = jest.fn();
 const mockRouter = { back: jest.fn(), replace: mockReplace };
 jest.mock('expo-router', () => ({
@@ -25,9 +26,7 @@ jest.mock('@expo/ui/swift-ui', () => {
 jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, { get: (_, name) => (value: unknown) => ({ name, value }) }));
 jest.mock('@/storage/device-store', () => ({ deviceHostStore: () => ({ load: mockLoad }) }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
-jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({
-  read: mockRead, write: (_host: unknown, write: Function) => write({ exec: jest.fn() }, { create: mockCreate }),
-}) }));
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ read: mockRead, onServer: mockServer.onServer }) }));
 let renderer: ReactTestRenderer;
 const listed = (topics: { id: string; label: string }[]) => ({ kind: 'listed', snapshot: {
   tags: [], sessions: [], no_topic: [], pinned: [],
@@ -38,7 +37,11 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
   mockRead.mockResolvedValue(listed([]));
-  mockCreate.mockResolvedValue({ kind: 'created', topic: 'new' });
+  mockServer = fakeHostServer();
+  // The `ok` of each `environment` request, or the error it ends with.
+  mockServer.answer = (payload) => mockCreate(payload);
+  mockServer.pushes.snapshot = snapshotPush();
+  mockCreate.mockResolvedValue({ changed: { created: true, topic_id: 'new' } });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
@@ -56,7 +59,7 @@ it('saves before the Tags read answers, with no Tag', async () => {
   await mount('Fix login');
   expect(save().props.disabled).toBe(false);
   await act(async () => { save().props.onPress(); });
-  expect(mockCreate).toHaveBeenCalledWith(expect.any(Function), 'Fix login', [], expect.any(String));
+  expect(mockServer.writes()).toEqual([{ version: 2, command: { create: { title: 'Fix login' } }, request: expect.any(String) }]);
   expect(mockReplace).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/topic-add-session' }));
 });
 
@@ -75,7 +78,7 @@ it('sends one create for two taps, and shows it runs', async () => {
   expect(mockCreate).toHaveBeenCalledTimes(1);
   expect(save().props.disabled).toBe(true);
   expect(text()).toContain('Creating Fix login on Dev Host…');
-  await act(async () => { finish({ kind: 'failed', error: 'The Config is locked.' }); });
+  await act(async () => { finish(Promise.reject(refused('The Config is locked.', 'store_busy'))); });
   expect(text()).toContain('The Config is locked.');
   expect(mockReplace).not.toHaveBeenCalled();
   await act(async () => { button('Retry')!.props.onPress(); });
@@ -83,30 +86,32 @@ it('sends one create for two taps, and shows it runs', async () => {
 });
 
 it('checks a create the Host did not answer, and never sends it again by itself', async () => {
-  mockCreate.mockRejectedValueOnce(new ExecDeadlineError());
+  mockCreate.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
   await mount('Fix login');
   await act(async () => { save().props.onPress(); });
-  expect(text()).toContain('The Host did not answer in time. The Topic may exist.');
+  expect(text()).toContain(
+    'The Host Server ended before it answered. It did not answer a second send of the same Request either. The Topic may exist.',
+  );
   expect(save().props.disabled).toBe(true);
   await act(async () => { save().props.onPress(); });
-  expect(mockCreate).toHaveBeenCalledTimes(1);
+  expect(mockCreate).toHaveBeenCalledTimes(2);
 
   await act(async () => { button('Check')!.props.onPress(); });
   expect(text()).toContain('Fix login is not on Dev Host. Save creates it.');
   expect(save().props.disabled).toBe(false);
 
-  mockCreate.mockRejectedValueOnce(new ExecDeadlineError());
+  mockCreate.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
   await act(async () => { save().props.onPress(); });
-  mockRead.mockResolvedValue(listed([{ id: 'made', label: 'Fix login' }]));
+  mockServer.pushes.snapshot = snapshotPush({ topics: [{ id: 'made', label: 'Fix login' }] });
   await act(async () => { button('Check')!.props.onPress(); });
   expect(mockReplace).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ topicId: 'made' }) }));
-  expect(mockCreate).toHaveBeenCalledTimes(2);
+  expect(mockCreate).toHaveBeenCalledTimes(4);
 });
 
 describe('the Request id of a Save', () => {
-  const sentId = (call: number) => mockCreate.mock.calls[call][3];
+  const sentId = (call: number) => mockServer.writes()[call]!.request;
   async function unanswered(title: string) {
-    mockCreate.mockRejectedValueOnce(new ExecDeadlineError());
+    mockCreate.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
     await mount(title);
     await act(async () => { save().props.onPress(); });
     await act(async () => { button('Check')!.props.onPress(); });
@@ -115,19 +120,20 @@ describe('the Request id of a Save', () => {
   it('stays the same for a Retry after a create that the Host did not answer', async () => {
     await unanswered('Fix login');
     await act(async () => { button('Retry')!.props.onPress(); });
-    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
     expect(sentId(1)).toBe(sentId(0));
+    expect(sentId(2)).toBe(sentId(0));
   });
 
   it('is new when the title changes', async () => {
     await unanswered('Fix login');
     renderer.root.findByType(TextField).props.text.value = 'Fix logout';
     await act(async () => { save().props.onPress(); });
-    expect(sentId(1)).not.toBe(sentId(0));
+    expect(sentId(2)).not.toBe(sentId(0));
   });
 
   it('is new after the Host refuses, so the Host does not answer with the old refusal', async () => {
-    mockCreate.mockResolvedValueOnce({ kind: 'failed', error: 'The Config does not define the Tag wrok.' });
+    mockCreate.mockRejectedValueOnce(refused('The Config does not define the Tag wrok.'));
     await mount('Fix login');
     await act(async () => { save().props.onPress(); });
     await act(async () => { button('Retry')!.props.onPress(); });
@@ -135,7 +141,7 @@ describe('the Request id of a Save', () => {
   });
 
   it('says the Topic may exist, and does not say Could not, when the Host has the Request in doubt', async () => {
-    mockCreate.mockResolvedValueOnce({ kind: 'unknown', message: 'The Request changed the records and did not finish.' });
+    mockCreate.mockRejectedValueOnce(inDoubt('The Request changed the records and did not finish.'));
     await mount('Fix login');
     await act(async () => { save().props.onPress(); });
     expect(text()).toContain('The Request changed the records and did not finish. The Topic may exist.');

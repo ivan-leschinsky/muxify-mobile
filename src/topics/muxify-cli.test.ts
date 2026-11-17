@@ -9,7 +9,7 @@ import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import flatList from './__fixtures__/environment-flat-list.json';
 import inPlay from './__fixtures__/environment-in-play.json';
 import liveTopic from './__fixtures__/topic-live.json';
-import type { TopicId } from './environment';
+import type { SessionId, TopicId } from './environment';
 import { RequestUnanswered, type RequestId } from './request';
 import type { TopicAction } from './topic-action';
 import type { Drop } from './topic-drop';
@@ -539,7 +539,7 @@ describe('sending the drop of a dragged Topic card', () => {
   it.each<[Drop, string[]]>([
     [{ kind: 'place', side: 'before', anchor: { kind: 'topic', id: OTHER } }, ['topic', 'move', '--before', OTHER]],
     [
-      { kind: 'place', side: 'after', anchor: { kind: 'locked-session', name: "my project/it's" } },
+      { kind: 'place', side: 'after', anchor: { kind: 'locked-session', session: '$9' as SessionId, name: "my project/it's" } },
       ['topic', 'move', '--after-session', "my project/it's"],
     ],
     [
@@ -548,7 +548,7 @@ describe('sending the drop of a dragged Topic card', () => {
     ],
     [{ kind: 'trade', with: { kind: 'topic', id: OTHER } }, ['topic', 'move', '--trade-with', OTHER]],
     [
-      { kind: 'trade', with: { kind: 'locked-session', name: 'gs/fix' } },
+      { kind: 'trade', with: { kind: 'locked-session', session: '$9' as SessionId, name: 'gs/fix' } },
       ['topic', 'move', '--trade-with-session', 'gs/fix'],
     ],
     [{ kind: 'fill', place: 2 }, ['topic', 'fill-place', '2']],

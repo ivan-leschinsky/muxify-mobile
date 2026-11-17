@@ -4,7 +4,7 @@ import { Button, TextField } from '@expo/ui/swift-ui';
 
 import NewTopicScreen from '@/app/new-topic';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
-import { ExecDeadlineError } from '@/ssh/host-connections';
+import { fakeHostServer, lost, refused, snapshotPush, topicPush } from '@/test-support/fake-host-server';
 import { toolbarButton, toolbarSide } from '@/test-support/toolbar';
 
 const mockLoad = jest.fn();
@@ -12,8 +12,7 @@ const mockRead = jest.fn();
 const mockCreate = jest.fn();
 const mockPaths = jest.fn();
 const mockAdd = jest.fn();
-const mockAddWorktree = jest.fn();
-const mockShow = jest.fn();
+let mockServer = fakeHostServer();
 const mockVisit = jest.fn();
 const mockOpen = jest.fn();
 const mockRouter = { back: jest.fn(), dismissTo: jest.fn() };
@@ -44,12 +43,10 @@ jest.mock('@/storage/device-store', () => ({
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/attach-context', () => ({ useOpenSession: () => mockOpen }));
 jest.mock('@/tmux/ssh-connection', () => {
-  const muxify = () => ({
-    read: mockRead, create: mockCreate, rankedSessionPaths: mockPaths, addSession: mockAdd,
-    addWorktreeSession: mockAddWorktree, show: mockShow, visit: mockVisit,
-  });
-  const work = (_host: unknown, run: Function) => run({ exec: jest.fn() }, muxify());
-  return { appConnections: () => ({ read: work, write: work }) };
+  const muxify = () => ({ read: mockRead, rankedSessionPaths: mockPaths, visit: mockVisit });
+  const exec = async (command: string) => ({ stdout: command.includes('$HOME') ? '/Users/me\n' : '', stderr: '', exitCode: 0 });
+  const work = (_host: unknown, run: Function) => run({ exec }, muxify());
+  return { appConnections: () => ({ read: work, write: work, onServer: mockServer.onServer }) };
 });
 
 const path = (name: string, directory: string) => ({ kind: 'session_path', name, label: name, directory, worktree: null, alsoIn: [], lastVisit: null });
@@ -58,15 +55,23 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
   mockRead.mockResolvedValue({ kind: 'listed', snapshot: { tags: [{ name: 'work', color: { light: null, dark: null } }] } });
-  mockCreate.mockResolvedValue({ kind: 'created', topic: 'new' });
+  mockServer = fakeHostServer();
+  // The `ok` of each `environment` request, or the error it ends with.
+  mockServer.answer = (payload) => {
+    const { command } = (payload as { environment: { command: Record<string, unknown> } }).environment;
+    return 'create' in command ? mockCreate(command.create) : mockAdd(command.add_session);
+  };
+  mockCreate.mockResolvedValue({ changed: { created: true, topic_id: 'new' } });
   mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('mobile', '/work/muxify mobile'), path('api', '/work/api')] });
-  mockAdd.mockResolvedValue({ kind: 'added', session: 'mobile/quick-topic' });
-  mockAddWorktree.mockResolvedValue({ kind: 'added', session: 'mobile-quick-topic/quick-topic' });
+  mockAdd.mockResolvedValue({ changed: { session_name: 'mobile/quick-topic' } });
   mockVisit.mockResolvedValue({ kind: 'changed' });
   mockOpen.mockResolvedValue(undefined);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
+
+/** The Topic each `add_session` went to, and its Request id. */
+const addTargets = () => mockServer.writes().filter((write) => 'add_session' in write.command).map(({ target, request }) => ({ target, request }));
 
 const text = () => renderer.root.findAllByType('Text' as never).map((node) => node.props.children).join('\n');
 const button = (label: string) => renderer.root.findAllByType(Button).find((node) => node.props.label === label);
@@ -100,7 +105,7 @@ describe('the title step', () => {
     await act(async () => { renderer.root.findByType('TagChoice' as never).props.onPress(); });
     await act(async () => { pressReturn(); });
 
-    expect(mockCreate).toHaveBeenCalledWith(expect.any(Function), 'Quick topic', ['work'], expect.any(String));
+    expect(mockCreate).toHaveBeenCalledWith({ title: 'Quick topic', tags: ['work'] });
     expect(toolbarSide(renderer, 'left').props.children).toBe('Add later');
     expect(folder('/work/muxify mobile')).toBeDefined();
     expect(folder('/work/api')).toBeDefined();
@@ -114,7 +119,7 @@ describe('the title step', () => {
   });
 
   it('stays on the title with the reason when the Host refuses, and creates on Retry', async () => {
-    mockCreate.mockResolvedValueOnce({ kind: 'failed', error: 'The Config is locked.' });
+    mockCreate.mockRejectedValueOnce(refused('The Config is locked.', 'store_busy'));
     await mount('Quick topic');
     await act(async () => { toolbarButton(renderer, 'Create').props.onPress(); });
 
@@ -126,19 +131,17 @@ describe('the title step', () => {
   });
 
   it('checks a create the Host did not answer, and goes on with the Topic the Host has', async () => {
-    mockCreate.mockRejectedValueOnce(new ExecDeadlineError());
+    mockCreate.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
     await mount('Quick topic');
     await act(async () => { pressReturn(); });
     expect(text()).toContain('The Topic may exist.');
 
-    mockRead.mockResolvedValue({ kind: 'listed', snapshot: { tags: [], pinned: [], unpinned: { limit: 3, places: [], guests: [], bench: [
-      { kind: 'topic', mark: null, sessions: [], topic: { id: 'made', label: 'Quick topic', note: null, tags: [], state: 'empty' } },
-    ] } } });
+    mockServer.pushes.snapshot = snapshotPush({ topics: [{ id: 'made', label: 'Quick topic' }] });
     await act(async () => { button('Check')!.props.onPress(); });
     await act(async () => { folder('/work/api').props.onPress(); });
 
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockAdd.mock.calls[0][1]).toBe('made');
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(addTargets()[0]!.target).toEqual({ topic: { id: 'made' } });
   });
 });
 
@@ -147,7 +150,10 @@ describe('the Add a Session step', () => {
     await toAddSession();
     await act(async () => { folder('/work/muxify mobile').props.onPress(); });
 
-    expect(mockAdd).toHaveBeenCalledWith(expect.any(Function), 'new', '/work/muxify mobile', expect.any(String), 'mobile');
+    expect(mockAdd).toHaveBeenCalledWith({
+      directory: '/work/muxify mobile', working_copy: { directory: {} }, name: 'mobile', chosen_name: 'mobile',
+    });
+    expect(addTargets()).toEqual([{ target: { topic: { id: 'new' } }, request: expect.any(String) }]);
     expect(mockOpen).toHaveBeenCalledWith(expect.objectContaining({
       hostId: 'host',
       destination: { sessionName: 'mobile/quick-topic', topic: expect.objectContaining({ id: 'new' }) },
@@ -161,15 +167,20 @@ describe('the Add a Session step', () => {
     await act(async () => { mockKeys['list-down']!(); });
     await act(async () => { mockKeys['list-pick']!(); });
 
-    expect(mockAdd.mock.calls[0][2]).toBe('/work/api');
+    expect(mockAdd.mock.calls[0][0].directory).toBe('/work/api');
   });
 
   it('adds the Session in a new Worktree for ⌥↩ and for the item of the long-press menu', async () => {
+    mockPaths.mockResolvedValue({ kind: 'listed', rows: [
+      { ...path('mobile', '/work/muxify mobile'), worktree: { path: '/work/muxify mobile', branch: 'main' } },
+    ] });
     await toAddSession();
     await act(async () => { mockKeys['list-worktree']!(); });
 
-    expect(mockAddWorktree).toHaveBeenCalledWith(expect.any(Function), 'new', '/work/muxify mobile', expect.any(String));
-    expect(mockAdd).not.toHaveBeenCalled();
+    // The Host names the new Worktree's Session from its branch, so there is no exact name.
+    expect(mockAdd).toHaveBeenCalledWith({
+      directory: '/work/muxify mobile', working_copy: { new_worktree: { from: '/work/muxify mobile' } }, name: 'mobile',
+    });
     expect(button('In a new Worktree')).toBeDefined();
   });
 
@@ -179,7 +190,8 @@ describe('the Add a Session step', () => {
     await act(async () => { field().props.onTextChange('~/Dev/new app'); });
     await act(async () => { folder('~/Dev/new app').props.onPress(); });
 
-    expect(mockAdd).toHaveBeenCalledWith(expect.any(Function), 'new', '~/Dev/new app', expect.any(String), 'newapp');
+    // The Host Server takes only absolute folders, so ~ is the Host's home.
+    expect(mockAdd).toHaveBeenCalledWith({ directory: '/Users/me/Dev/new app', working_copy: { directory: {} }, chosen_name: 'newapp' });
   });
 
   it('keeps the Empty Topic and adds nothing on Add later, also with Escape', async () => {
@@ -192,26 +204,27 @@ describe('the Add a Session step', () => {
   });
 
   it('sends the same Request on a Retry after no answer, so the Host makes one Session', async () => {
-    mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
-    mockShow.mockResolvedValue({ kind: 'shown', topic: { label: 'Quick topic', sessions: [] } });
+    mockAdd.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
+    mockServer.pushes.topic = topicPush('new', 'Quick topic');
     await toAddSession();
     await act(async () => { folder('/work/api').props.onPress(); });
     expect(text()).toContain('The Session may exist.');
     await act(async () => { button('Check')!.props.onPress(); });
     await act(async () => { button('Retry')!.props.onPress(); });
 
-    expect(mockAdd).toHaveBeenCalledTimes(2);
-    expect(mockAdd.mock.calls[1].slice(1)).toEqual(mockAdd.mock.calls[0].slice(1));
+    expect(mockAdd).toHaveBeenCalledTimes(3);
+    expect(mockAdd.mock.calls[2]).toEqual(mockAdd.mock.calls[0]);
+    expect(new Set(addTargets().map(({ request }) => request)).size).toBe(1);
   });
 
   it('opens the Session that a check finds, and sends no second add', async () => {
-    mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
-    mockShow.mockResolvedValue({ kind: 'shown', topic: { label: 'Quick topic', sessions: [{ id: '$1', name: 'api/quick-topic', windows: null }] } });
+    mockAdd.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
+    mockServer.pushes.topic = topicPush('new', 'Quick topic', [{ id: '$1', name: 'api/quick-topic' }]);
     await toAddSession();
     await act(async () => { folder('/work/api').props.onPress(); });
     await act(async () => { button('Check')!.props.onPress(); });
 
-    expect(mockAdd).toHaveBeenCalledTimes(1);
+    expect(mockAdd).toHaveBeenCalledTimes(2);
     expect(mockOpen.mock.calls[0][0].destination.sessionName).toBe('api/quick-topic');
     expect(mockRouter.dismissTo).toHaveBeenCalledWith('/terminal');
   });

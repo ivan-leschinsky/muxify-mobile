@@ -145,7 +145,7 @@ function anchorOf(card: CardRow): DropAnchor | null {
     case 'topic':
       return { kind: 'topic', id: card.id };
     case 'locked-session':
-      return { kind: 'locked-session', name: card.name };
+      return { kind: 'locked-session', session: card.session, name: card.name };
     case 'open-place':
       return { kind: 'open-place', id: card.id };
     case 'unknown-card':

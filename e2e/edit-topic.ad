@@ -18,18 +18,16 @@ wait "label=\"Edit Topic…\" role=button" 8000
 press "label=\"Edit Topic…\" role=button"
 wait "label=\"Tag #e2eold\"" 15000
 fill "label=\"Topic title\"" "e2e Edited it's"
-fill "label=\"Topic Note\" editable=true" "-x e2e"
+# The Host Server takes a value that starts with -, which the Host CLI read as an option.
+fill "label=\"Topic Note\" editable=true" "-x e2e second note"
 press "label=\"Tag #e2eold\""
 press "label=\"Tag #personal\""
-press "label=\"Save\""
-wait "text" "starts with -" 15000
-fill "label=\"Topic Note\" editable=true" "e2e second note"
 press "label=\"Save\""
 wait "id=\"pane-command\"" 15000
 wait 1500
 press "id=\"header-title\""
 wait "label=\"Close Choose\"" 8000
-wait "label=\"Note e2e second note\"" 15000
+wait "label=\"Note -x e2e second note\"" 15000
 is "visible" "text=\"#personal  #work\""
 press "label=\"Close Choose\""
 

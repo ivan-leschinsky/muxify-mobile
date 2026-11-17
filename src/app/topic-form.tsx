@@ -34,6 +34,7 @@ import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
+import { createTopic, pushedListing } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
 import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { topicSeedParam } from '@/topics/topic-detail';
@@ -94,10 +95,7 @@ export default function TopicFormScreen() {
     const sent = intentFor(intent.current, JSON.stringify([wanted, chosenTags]));
     intent.current = sent;
     void send(async ({ host, step, refuse, unsure }) => {
-      const made = await appConnections().write(host, (transport, muxify) => {
-        step('sending');
-        return muxify.create((command) => transport.exec(command), wanted, chosenTags, sent.request);
-      });
+      const made = await createTopic(host, wanted, chosenTags, sent.request, () => step('sending'));
       intent.current = intentAfter(sent, made);
       if (made.kind === 'failed') return refuse(made.error);
       if (made.kind === 'unknown') return unsure(made.message);
@@ -108,9 +106,7 @@ export default function TopicFormScreen() {
   const checkMade = () => {
     const wanted = title.value.trim();
     void check(async ({ host, refuse }) => {
-      const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (read.kind !== 'listed') throw new Error(read.kind === 'failed' ? read.error : 'Update Muxify on this Host to create Topics.');
-      return emptyTopicTitled(read.snapshot, wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Save creates it.`);
+      return emptyTopicTitled(await pushedListing(host), wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Save creates it.`);
     }).then((topic) => opened(topic, wanted));
   };
 

@@ -10,7 +10,7 @@ import { parseTopicDetail, type TopicRead } from './topic-detail';
 import type { TopicChange, TopicWrite } from './topic-edit';
 import { topicActionCommand, type TopicAction } from './topic-action';
 import { dropCommand, type Drop } from './topic-drop';
-import { REQUEST_CAPABILITY, RequestUnanswered, type RequestId, type UnknownOutcome } from './request';
+import { REQUEST_CAPABILITY, REQUEST_MISMATCH_ERROR, RequestUnanswered, type RequestId, type UnknownOutcome } from './request';
 import { parseSessionPathRows, parseSessionPaths, type RankedPathsRead, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
@@ -43,8 +43,6 @@ const USAGE_ERROR = 2;
 const REQUEST_MISMATCH = 3;
 /** The Request changed the Host's records and did not finish, and its command is not safe to run again. */
 const REQUEST_IN_DOUBT = 4;
-
-const REQUEST_MISMATCH_ERROR = 'Muxify sent this change in a way that the Host could not accept. Try again.';
 
 /**
  * A usage error answers a change with the whole help text. It comes from a

@@ -229,8 +229,9 @@ _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Write**:
 One change the user asks of a Host: New Topic, Edit Topic, a Go to pick that
-makes a Session, Add a Session, and the menu orders, drops and wakes of a
-Topic card. The user never
+makes a Session, Add a Session, the menu orders, drops and wakes of a Topic
+card, Pin, Unpin, Forget, renaming, removing or stopping a Session, renaming
+or closing a Window, and Mark All as Read. The user never
 sends it again blind: a Host Write that carries a Request is sent one more
 time with the same id when no answer came, and any other is not sent again by
 itself. While it runs, a second tap is ignored. It ends done, failed or
@@ -435,8 +436,8 @@ Agents.
 _Avoid_: Reset, Restart
 
 **Request**:
-One change that the user asks of a Host through its Host CLI, with an id that
-the phone makes when the action starts. The Host applies a Request one time: a
+One change that the user asks of a Host through its Host Server, with an id
+that the phone makes when the action starts. The Host applies a Request one time: a
 second send with the same id gets the answer of the first and changes nothing.
 So when the answer to a change is lost, the phone sends the same Request one
 more time. If there is still no answer, or the Host says that the Request is

@@ -296,8 +296,8 @@ describe('the Topics tab of the Host Screen', () => {
         unpinned: inPlay({ places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] }),
       }),
       sections: [
-        section('pinned', 'Pinned', { kind: 'locked-session', name: 'notes', mark: 'unread', pinned: true }),
-        inPlaySection({ kind: 'locked-session', name: 'scratch', mark: null, pinned: false }),
+        section('pinned', 'Pinned', { kind: 'locked-session', session: sid('$2'), name: 'notes', mark: 'unread', pinned: true }),
+        inPlaySection({ kind: 'locked-session', session: sid('$1'), name: 'scratch', mark: null, pinned: false }),
       ],
     },
     {
@@ -714,7 +714,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
   it('shows the Benched card of a Locked Session that the Attach is on', () => {
     expect(benchRows({ sessionName: 'locked', topic: null })).toEqual([
       CLOSED_BENCH,
-      { kind: 'locked-session', name: 'locked', mark: null, pinned: false },
+      { kind: 'locked-session', session: sid('$4'), name: 'locked', mark: null, pinned: false },
     ]);
   });
 

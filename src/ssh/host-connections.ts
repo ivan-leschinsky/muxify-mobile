@@ -82,6 +82,14 @@ export interface HostConnections {
   /** The Host Server of the Host's open Connection, or null when none runs. */
   hostServer(hostId: string): HostServer | null;
   /**
+   * Runs `work` on the Host Server of the Host's Connection, opening one when
+   * none is open, and holds the Connection while it runs. A Host Server that
+   * starts again on the Connection takes the requests that wait for it. With
+   * no Host Server, as in Sessions only, it fails with the reason before `work`
+   * runs, so nothing reached the Host.
+   */
+  onServer<T>(host: Host, work: (server: HostServer) => Promise<T>, options?: ScreenOptions): Promise<T>;
+  /**
    * What the Host Server of the Host's latest Connection says: where it
    * stands, and the latest Listing it pushed. It stays after its Connection
    * closes, with the server `closed`, until a new Connection starts one. Null
@@ -448,6 +456,24 @@ export function createHostConnections(options: {
     hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
 
     hostServer: (hostId) => entries.get(hostId)?.server ?? null,
+
+    async onServer(host, work, options) {
+      const { entry, dialed } = await acquire(host);
+      checkHostKey(entry, dialed, options);
+      begin(entry, dialed);
+      const { server } = entry;
+      if (!server) throw new Error(`Topics are unavailable on ${host.displayName}: its Connection runs no Host Server.`);
+      const state = server.state();
+      if (state.kind === 'sessions-only') throw new Error(`Topics are unavailable on ${host.displayName}: ${state.reason}.`);
+      entry.uses += 1;
+      busy(entry);
+      try {
+        return await work(server);
+      } finally {
+        entry.uses -= 1;
+        settle(entry);
+      }
+    },
 
     listing: (hostId) => feeds.get(hostId)?.feed.current() ?? null,
 

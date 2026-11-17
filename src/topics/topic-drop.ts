@@ -1,11 +1,12 @@
 import { shellQuote } from '@/tmux/commands';
 
-import type { TopicId } from './environment';
+import type { SessionId, TopicId } from './environment';
 
 /** A card that a dragged Topic card can go next to, by the name the Mac's CLI takes for it. */
 export type DropAnchor =
   | { kind: 'topic'; id: TopicId }
-  | { kind: 'locked-session'; name: string }
+  /** By its tmux id, which the Host Server takes, and its name, which the Host CLI takes. */
+  | { kind: 'locked-session'; session: SessionId; name: string }
   /** The id that `environment show` gives the Open Place. */
   | { kind: 'open-place'; id: string };
 
@@ -14,8 +15,8 @@ export type TradePartner = Exclude<DropAnchor, { kind: 'open-place' }>;
 
 /**
  * Where a dragged Topic card was dropped, as the Mac's Sidebar drag reads it.
- * Each is one `muxify topic` command that the Mac's rules decide: the phone
- * sends it and reads the Listing again.
+ * Each is one command that the Mac's rules decide: the phone sends it, and the
+ * Host Server pushes the Listing that shows the result.
  */
 export type Drop =
   /** In its own section, next to another card. */

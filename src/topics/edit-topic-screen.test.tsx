@@ -3,14 +3,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, TextField } from '@expo/ui/swift-ui';
 
 import TopicEditScreen from '@/app/topic-edit';
-import { ExecDeadlineError } from '@/ssh/host-connections';
+import { fakeHostServer, lost, refused, topicPush } from '@/test-support/fake-host-server';
 import { toolbarButton } from '@/test-support/toolbar';
 
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
 const mockChange = jest.fn();
-const mockShow = jest.fn();
+let mockServer = fakeHostServer();
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({
   ...require('@/test-support/toolbar').mockStack, useRouter: () => ({ back: mockBack }),
@@ -29,11 +29,10 @@ jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, { get: (_, name) =>
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/storage/device-store', () => ({ deviceHostStore: () => ({ load: mockLoad }) }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
-jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => ({ current: () => null }) }));
 jest.mock('@/ssh/connect-host', () => ({ describeConnectionFailure: (value: Error) => value.message }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({
-  read: (_host: unknown, work: Function) => work({ exec: jest.fn() }, { read: mockRead, show: mockShow }),
-  write: (_host: unknown, work: Function) => work({ exec: jest.fn() }, { change: mockChange }),
+  read: (_host: unknown, work: Function) => work({ exec: jest.fn() }, { read: mockRead }),
+  onServer: mockServer.onServer,
 }) }));
 
 let renderer: ReactTestRenderer;
@@ -46,7 +45,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
   mockRead.mockResolvedValue({ kind: 'listed', snapshot: { tags: [] } });
-  mockChange.mockResolvedValue({ kind: 'changed' });
+  mockServer = fakeHostServer();
+  // The `ok` of each `environment` request, or the error it ends with.
+  mockServer.answer = (payload) => mockChange((payload as { environment: unknown }).environment);
+  mockChange.mockResolvedValue({ changed: { topic_id: 'topic' } });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
@@ -56,7 +58,7 @@ async function mount() {
 }
 
 it("puts the Host's refusal under its field, with no row above the form", async () => {
-  mockChange.mockResolvedValueOnce({ kind: 'failed', error: 'That title is taken.' });
+  mockChange.mockRejectedValueOnce(refused('That title is taken.', 'topic_unavailable'));
   await mount();
   fields()[0].props.text.value = 'Taken';
   await act(async () => { save().props.onPress(); });
@@ -66,23 +68,39 @@ it("puts the Host's refusal under its field, with no row above the form", async 
 });
 
 it('checks an edit the Host did not answer, and closes when the Host has it', async () => {
-  mockChange.mockRejectedValueOnce(new ExecDeadlineError());
+  mockChange.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
   await mount();
   fields()[0].props.text.value = 'Fix the login';
   await act(async () => { save().props.onPress(); });
-  expect(texts()).toContain('The Host did not answer in time. The changes may be saved.');
+  expect(texts()).toContain(
+    'The Host Server ended before it answered. It did not answer a second send of the same Request either. The changes may be saved.',
+  );
   expect(save().props.disabled).toBe(true);
   expect(fields()[0].props.modifiers).toContainEqual({ name: 'disabled', value: true });
 
-  mockShow.mockResolvedValueOnce({ kind: 'shown', topic: { label: 'Fix login', note: null, tags: [] } });
+  mockServer.pushes.topic = topicPush('topic', 'Fix login');
   await act(async () => { button('Check').props.onPress(); });
   expect(texts()).toContain('Some changes are not on Dev Host. Save sends them.');
   expect(save().props.disabled).toBe(false);
 
-  mockChange.mockRejectedValueOnce(new ExecDeadlineError());
+  mockChange.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
   await act(async () => { save().props.onPress(); });
-  mockShow.mockResolvedValueOnce({ kind: 'shown', topic: { label: 'Fix the login', note: null, tags: [] } });
+  mockServer.pushes.topic = topicPush('topic', 'Fix the login');
   await act(async () => { button('Check').props.onPress(); });
   expect(mockBack).toHaveBeenCalledTimes(1);
-  expect(mockChange).toHaveBeenCalledTimes(2);
+  expect(mockChange).toHaveBeenCalledTimes(4);
+  // Each Save is a new Request, sent two times when its answer is lost.
+  const [first, again, second] = mockServer.writes();
+  expect(first).toEqual({ version: 2, command: { rename: { title: 'Fix the login' } }, target: { topic: { id: 'topic' } }, request: expect.any(String) });
+  expect(again!.request).toBe(first!.request);
+  expect(second!.request).not.toBe(first!.request);
+});
+
+it('sends each changed field as its own write, and reads nothing after the Save', async () => {
+  await mount();
+  fields()[1].props.text.value = 'Bisect';
+  await act(async () => { save().props.onPress(); });
+  expect(mockServer.writes().map((write) => write.command)).toEqual([{ note: { text: 'Bisect' } }]);
+  expect(mockServer.requests).toHaveLength(1);
+  expect(mockBack).toHaveBeenCalledTimes(1);
 });

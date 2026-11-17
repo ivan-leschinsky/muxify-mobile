@@ -1,7 +1,10 @@
 /**
- * The Request id that the phone gives a Host CLI write, and what a write with
- * no answer becomes. See ADR 0021.
+ * The Request id that the phone gives a Host Write, and what a write with no
+ * answer becomes. See ADR 0021.
  */
+
+/** What the phone says when the Host has the Request id with other arguments, which only a phone bug gives. */
+export const REQUEST_MISMATCH_ERROR = 'Muxify sent this change in a way that the Host could not accept. Try again.';
 
 /** A UUID that names one thing the user asked for. The Host applies it one time. */
 export type RequestId = string & { readonly __brand: 'RequestId' };

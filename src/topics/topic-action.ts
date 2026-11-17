@@ -3,9 +3,10 @@ import type { SFSymbol } from 'expo-symbols';
 import type { Mark } from './environment';
 
 /**
- * The orders in the long-press menu of a Topic row. Each is one `muxify topic`
- * command that the Mac's rules decide: the phone sends it and reads the
- * Listing again, and never works out where a card lands.
+ * The orders in the long-press menu of a Topic row. Each is one command that
+ * the Mac's rules decide: the phone sends it, the Host Server pushes the
+ * Listing that shows the result, and the phone never works out where a card
+ * lands.
  *
  * Mark as Read reads the whole Topic, as the Mac's Mark Read does: the Topic
  * mark and the Unread mark of each Agent in its Sessions. Mark as Unread

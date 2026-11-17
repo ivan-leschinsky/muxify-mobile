@@ -4,6 +4,8 @@ import type { Host } from '@/storage/records';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import { INSTALL_TIMEOUT_MS, type HostCliState } from '@/topics/host-cli-install';
 import type { TopicsRead } from '@/topics/host-topics';
+import { sendEnvironment } from '@/topics/host-write-request';
+import type { TopicId } from '@/topics/environment';
 import { newRequestId, WriteOutcomeUnknown } from '@/topics/request';
 
 import {
@@ -14,6 +16,9 @@ import {
   type Dialed,
   type ScreenUse,
 } from './host-connections';
+
+jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => { throw new Error('the tests give the Connections'); } }));
 
 const HOST: Host = {
   id: 'h1',
@@ -48,6 +53,8 @@ interface FakeLink {
 interface FakeChannel {
   command: string;
   closed: boolean;
+  /** The frames the phone wrote on it, parsed. Only a Host Server channel keeps them. */
+  frames: Record<string, unknown>[];
   print(text: string): void;
   exit(code?: number): void;
 }
@@ -90,7 +97,7 @@ function setup(options: {
         silentOn: options.silentOn,
         drop: () => {
           link.connected = false;
-          for (const channel of link.channels) if (!channel.closed) channel.exit();
+          for (const channel of [...link.channels, ...link.servers]) if (!channel.closed) channel.exit();
           dropped();
         },
         channels: [],
@@ -117,6 +124,7 @@ function setup(options: {
         const channel: FakeChannel = {
           command,
           closed: false,
+          frames: [],
           print: (text) => events.onData(new TextEncoder().encode(text).buffer as ArrayBuffer),
           exit: (code) => {
             channel.closed = true;
@@ -135,8 +143,10 @@ function setup(options: {
         const channel: FakeChannel = {
           command,
           closed: false,
+          frames: [],
           print: (text) => events.onData(new TextEncoder().encode(text).buffer as ArrayBuffer),
           exit: (code) => {
+            if (channel.closed) return;
             channel.closed = true;
             events.onClosed(code);
           },
@@ -144,7 +154,11 @@ function setup(options: {
         link.servers.push(channel);
         setTimeout(() => channel.print(`MUXIFY-PROTOCOL\n${options.serverHello}\n`), 0);
         return Promise.resolve({
-          write: () => {},
+          write: (bytes: Uint8Array) => {
+            for (const line of new TextDecoder().decode(bytes).split('\n')) {
+              if (line !== '') channel.frames.push(JSON.parse(line) as Record<string, unknown>);
+            }
+          },
           close: () => {
             channel.closed = true;
             return Promise.resolve();
@@ -755,5 +769,103 @@ describe('the Host Server', () => {
     expect(links[0]?.servers[0]?.closed).toBe(true);
     expect(links[1]?.servers).toHaveLength(1);
     expect(connections.hostServer(HOST.id)).not.toBe(first);
+  });
+  /** The requests the phone wrote on a Host Server channel, but for the Listing's subscription. */
+  const requests = (channel: FakeChannel | undefined) =>
+    channel?.frames.filter((frame) => frame.kind === 'request' && !('subscribe' in (frame.request as object))) ?? [];
+  /** The Host Server answers a request with this `ok`. */
+  const answer = (channel: FakeChannel, id: unknown, ok: unknown) => channel.print(`${JSON.stringify({ end: { ok }, id, kind: 'end' })}\n`);
+  const RENAME = { command: { rename: { title: 'Fix login' } }, topic: 't1' as TopicId, request: newRequestId() };
+  const RENAMED = { environment: { version: 2, command: { rename: { title: 'Fix login' } }, target: { topic: { id: 't1' } }, request: RENAME.request } };
+
+  it('runs a request on the Host Server of the Connection, and holds the Connection while it runs', async () => {
+    const { clock, links, connections } = setup({ serverHello: CAPABLE });
+
+    const asked = connections.onServer(HOST, (server) => server.request({ ping: {} }));
+    await settle();
+    await settle();
+    const [ping] = requests(links[0]!.servers[0]);
+    expect(ping).toMatchObject({ request: { ping: {} } });
+    clock.advance(IDLE_MS);
+    expect(links[0]?.disconnected).toBe(false);
+
+    answer(links[0]!.servers[0]!, ping!.id, {});
+    await expect(asked).resolves.toEqual({});
+  });
+
+  it('sends a write whose Connection broke before its end once more, with the same id, to the Host Server of a new Connection', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+
+    const write = sendEnvironment(HOST, RENAME, () => {}, connections);
+    await settle();
+    expect(requests(links[0]!.servers[0]).map((frame) => frame.request)).toEqual([RENAMED]);
+
+    links[0]!.drop();
+    await settle();
+    await settle();
+    await settle();
+    const [again] = requests(links[1]?.servers[0]);
+    expect(again?.request).toEqual(RENAMED);
+    answer(links[1]!.servers[0]!, again!.id, { changed: { topic_id: 't1' } });
+
+    await expect(write).resolves.toEqual({ kind: 'answered', answer: { changed: { topic_id: 't1' } } });
+    expect(links).toHaveLength(2);
+  });
+
+  it('sends a write whose Host Server stopped before its end once more, with the same id, to the one that starts again on the Connection', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+
+    const write = sendEnvironment(HOST, RENAME, () => {}, connections);
+    await settle();
+    links[0]!.servers[0]!.exit(1);
+    await settle();
+    await settle();
+    await settle();
+    const [again] = requests(links[0]!.servers[1]);
+    expect(again?.request).toEqual(RENAMED);
+    answer(links[0]!.servers[1]!, again!.id, { changed: { topic_id: 't1' } });
+
+    await expect(write).resolves.toMatchObject({ kind: 'answered' });
+    expect(links).toHaveLength(1);
+  });
+
+  it('is unsure when the next Host Server does not answer either', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+
+    const write = sendEnvironment(HOST, RENAME, () => {}, connections);
+    const unsure = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: true });
+    await settle();
+    links[0]!.servers[0]!.exit(1);
+    await settle();
+    await settle();
+    await settle();
+    links[0]!.servers[1]!.exit(1);
+    await unsure;
+    expect(requests(links[0]!.servers[1]).map((frame) => frame.request)).toEqual([RENAMED]);
+    expect(links[0]!.servers).toHaveLength(3);
+    expect(requests(links[0]!.servers[2])).toEqual([]);
+  });
+
+  it('fails before anything goes out when the Host has Sessions only', async () => {
+    const { links, connections } = setup({ serverHello: BARE });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+    const use = jest.fn();
+
+    await expect(connections.onServer(HOST, use)).rejects.toEqual(
+      new Error("Topics are unavailable on Mac: the Host's muxify is too old (muxify 1a2b3c4 1763100000)."),
+    );
+    expect(use).not.toHaveBeenCalled();
+    expect(requests(links[0]!.servers[0])).toEqual([]);
   });
 });

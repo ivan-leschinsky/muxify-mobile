@@ -3,12 +3,12 @@ import { object } from './json-shape';
 import type { UnknownOutcome } from './request';
 
 /**
- * What one `topic new` came to: the new Topic, the Host's reason it made
- * none, or no answer, when the Host may have made it.
+ * What one `create` came to: the new Topic, the Host's reason it made none,
+ * or a Request in doubt, when the Host may have made it.
  */
 export type NewTopicRead = { kind: 'created'; topic: TopicId } | { kind: 'failed'; error: string } | UnknownOutcome;
 
-/** The id in the answer of `topic new --json`: `{"changed":{"topic_id":…}}`. */
+/** The id in the answer of `create`: `{"changed":{"topic_id":…}}`. */
 export function parseNewTopic(json: unknown): TopicId {
   const changed = object(object(json, 'answer').changed, 'changed');
   return topicId(changed.topic_id, 'changed.topic_id');

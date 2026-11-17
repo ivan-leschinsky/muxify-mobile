@@ -6,8 +6,9 @@ import type { UnknownOutcome } from './request';
 import type { SessionPathChoice } from './session-paths';
 
 /**
- * What one `topic add-session` came to: the new Session's name, the Host's
- * reason it made none, or no answer, when the Host may have made it.
+ * What one `add_session` or `new_session` came to: the new Session's name,
+ * the Host's reason it made none, or a Request in doubt, when the Host may
+ * have made it.
  */
 export type AddSessionRead = { kind: 'added'; session: string } | { kind: 'failed'; error: string } | UnknownOutcome;
 
@@ -53,7 +54,7 @@ function withoutSlug(sessionName: string): string {
   return slash < 0 ? sessionName : sessionName.slice(0, slash);
 }
 
-/** The Session in the answer of `topic add-session --json`: `{"changed":{"session_name":…}}`. */
+/** The Session in the answer of `add_session` and `new_session`: `{"changed":{"session_name":…}}`. */
 export function parseAddedSession(json: unknown): string {
   const changed = object(object(json, 'answer').changed, 'changed');
   return string(changed.session_name, 'changed.session_name');

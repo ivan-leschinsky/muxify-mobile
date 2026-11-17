@@ -72,7 +72,7 @@ export type HostScreenRow =
       seed: TopicDetail;
     }
   /** A Locked Session shown as its own card. */
-  | { kind: 'locked-session'; name: string; mark: Mark | null; pinned: boolean }
+  | { kind: 'locked-session'; session: SessionId; name: string; mark: Mark | null; pinned: boolean }
   /** An empty In Play place. */
   | { kind: 'open-place'; id: string }
   /** The In Play Bench, as one row that opens to show its cards. */
@@ -339,7 +339,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
       const name = names.get(card.sessions[0]);
       return name === undefined
         ? { kind: 'unknown-card', text: card.sessions[0] }
-        : { kind: 'locked-session', name, mark: card.mark, pinned };
+        : { kind: 'locked-session', session: card.sessions[0], name, mark: card.mark, pinned };
     }
     case 'open_place':
       return { kind: 'open-place', id: card.id };
