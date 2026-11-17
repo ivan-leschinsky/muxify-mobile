@@ -1,4 +1,3 @@
-import { parseBrowserTabs, type BrowserTabsRead } from '@/browser/tabs';
 import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 
@@ -156,14 +155,6 @@ export interface MuxifyCli {
    * Fresh does. It answers as `reopenTopic` does.
    */
   startTopicFresh(exec: Exec, topic: TopicId, request: RequestId): Promise<TopicWrite>;
-
-  /**
-   * The Tabs of one Window's Browser: `browser tabs --json`. It names the
-   * Window by tmux's id, such as `@12`, because an SSH exec is in no Pane for
-   * `muxify` to take the Window from. It finds `muxify` as `read` does. A
-   * Window with no Browser lists no Tabs.
-   */
-  browserTabs(exec: Exec, window: string): Promise<BrowserTabsRead>;
 
   /**
    * Tells this CLI that the Request went out with `--request` before, on this
@@ -384,11 +375,6 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       `session new ${folderArgument(folder)} --name ${shellQuote(name)} --json`,
       request,
     ),
-
-    async browserTabs(exec, window) {
-      const parsed = await answerTo(exec, `browser tabs --window ${shellQuote(window)} --json`, parseBrowserTabs);
-      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', tabs: parsed.value };
-    },
 
     locate,
 

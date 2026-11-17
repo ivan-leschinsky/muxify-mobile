@@ -28,12 +28,20 @@
 #
 # The app's `muxify` over SSH is a stub, first on the sshd's PATH and on the
 # command's. It gives every command to the real CLI except `browser`, which would talk to the
-# Muxify app you work in. `browser tabs` prints $MUXIFY_E2E_ROOT/browser-tabs.json
-# when a suite has written one, and else fails as the CLI does on a tmux server
-# that Muxify does not show. Each `browser` call is a line of
+# Muxify app you work in: it fails as the CLI does on a tmux server that
+# Muxify does not show. Each `browser` call is a line of
 # $MUXIFY_E2E_ROOT/browser-calls, for a suite to read. While
 # $MUXIFY_E2E_ROOT/no-host-server exists, `server` fails as on a CLI that has
 # no Host Server, so a Connection opened after that shows Sessions only.
+#
+# A Window's Browser Tabs are the ones desktop Muxify stores in the Window's
+# tmux options, @muxify_tabs and @muxify_active_tab, which the real
+# `muxify server` answers `browser_tabs` from. A suite stores them with
+#
+#   stored-tabs <window> <active tab's index> <url>...
+#
+# which is also first on the command's PATH. `stored-tabs <window>` with no
+# Tabs removes them, as for a Window whose Browser has none.
 #
 # The real CLI is the Host CLI that `(cd ../muxify-shell && make host-cli)`
 # builds, whose Host Server offers every capability the app uses, or
@@ -143,16 +151,25 @@ if [ "\$1" = server ] && [ -f "$ROOT/no-host-server" ]; then
 fi
 if [ "\$1" = browser ]; then
   echo "\$*" >>"$ROOT/browser-calls"
-  if [ "\$2" = tabs ] && [ -f "$ROOT/browser-tabs.json" ]; then
-    cat "$ROOT/browser-tabs.json"
-    exit 0
-  fi
   echo "cannot reach Muxify: Muxify does not serve the Browser of this tmux server." >&2
   exit 1
 fi
 exec "$REAL_MUXIFY" "\$@"
 EOF
 chmod +x "$ROOT/bin/muxify"
+cat >"$ROOT/bin/stored-tabs" <<'EOF'
+#!/bin/sh
+# stored-tabs <window> [<active tab's index> <url>...]: the Tabs desktop Muxify stores for a Window.
+window=$1
+shift
+if [ $# -eq 0 ]; then
+  exec tmux set-option -wqu -t "$window" @muxify_tabs \; set-option -wqu -t "$window" @muxify_active_tab
+fi
+active=$1
+shift
+exec tmux set-option -wq -t "$window" @muxify_tabs "$*" \; set-option -wq -t "$window" @muxify_active_tab "$active"
+EOF
+chmod +x "$ROOT/bin/stored-tabs"
 
 /usr/sbin/sshd -f "$ROOT/sshd_config" -E "$ROOT/sshd.log" || { cat "$ROOT/sshd.log"; exit 1; }
 for _ in $(seq 50); do

@@ -7,7 +7,8 @@
 #   1  the Title Sheet lists the Tabs that the phone can reach: an IPv4
 #      address in 100.64.0.0/10, a *.ts.net name and a public site. It lists
 #      no Tab at localhost or at a private address on the Host's LAN
-#   2  the app asked the Host for the Tabs of the Window on screen, by tmux's id
+#   2  the Tabs are those of the Window on screen: another Window's stored
+#      Tabs are not listed
 #   3  a tap on a Tab loads its page in the Web View, and the page's title is
 #      the screen's title
 #   4  Back from the Web View finds the Session still attached. Each Back is
@@ -18,11 +19,13 @@
 #      once it answers
 #   6  a Host with no Browser for the Window shows no Browser tabs section
 #
-# The sandbox's `muxify` is a stub for `browser` (see e2e/sandbox.sh), so no
-# step talks to the Muxify app on this Mac. The Tabs are a fixture. The page is
-# real: a web server on this Mac's own Tailscale address, which the simulator
-# reaches as a phone on the tailnet does. No step taps the public site's Tab,
-# so the run does not need the internet.
+# The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
+# stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
+# the sandbox's real `muxify server`, so no step talks to the Muxify app on this
+# Mac. A stored Tab has no title yet, so each row is the Tab's address. The
+# page is real: a web server on this Mac's own Tailscale address, which the
+# simulator reaches as a phone on the tailnet does. No step taps the public
+# site's Tab, so the run does not need the internet.
 #
 # Step 3 runs a second time for this Mac's *.ts.net name when Tailscale gives
 # it one that resolves. That page is plain http at a name, which iOS loads only
@@ -78,6 +81,8 @@ attach() {
 }
 
 open_title_sheet() {
+  # A press within about a second of a push or a pop can be lost.
+  sleep 1.5
   agent-device press 'id="header-title"' >/dev/null 2>&1
   agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
 }
@@ -99,7 +104,7 @@ open_tab() {
   back
 }
 
-echo "0/6  a page on this Mac's Tailscale address, and six Tabs on the Host"
+echo "0/6  a page on this Mac's Tailscale address, and six Tabs stored on the Host"
 ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
 [ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
 NAME=$(tailscale status --json 2>/dev/null \
@@ -111,44 +116,41 @@ mkdir -p "$ROOT/www"
 printf '<!doctype html><title>%s</title><h1>%s</h1>\n' "$PAGE_TITLE" "$MARKER" >"$ROOT/www/index.html"
 serve "$PORT"
 
-# The titles are the Host's, as the desktop Browser last saw them. The second
-# Tab has none, so its row is its address.
-python3 - "$ROOT/browser-tabs.json" "http://$ADDRESS:$PORT/" "http://${NAME:-$FAKE_NAME}:$PORT/" "http://$ADDRESS:$DOWN_PORT/" <<'PY'
-import json, sys
-path, by_address, by_name, down = sys.argv[1:5]
-json.dump([
-    {"active": False, "id": "11111111-1111-1111-1111-111111111111", "title": "Localhost page", "url": "http://localhost:3000/"},
-    {"active": True, "id": "22222222-2222-2222-2222-222222222222", "title": "By address", "url": by_address},
-    {"active": False, "id": "33333333-3333-3333-3333-333333333333", "title": "", "url": by_name},
-    {"active": False, "id": "44444444-4444-4444-4444-444444444444", "title": "Public page", "url": "https://example.com/"},
-    {"active": False, "id": "55555555-5555-5555-5555-555555555555", "title": "Down page", "url": down},
-    {"active": False, "id": "66666666-6666-6666-6666-666666666666", "title": "LAN page", "url": "http://192.168.1.10:8080/"},
-], open(path, "w"))
-PY
+BY_ADDRESS="http://$ADDRESS:$PORT/"
+BY_NAME="http://${NAME:-$FAKE_NAME}:$PORT/"
+DOWN="http://$ADDRESS:$DOWN_PORT/"
+PUBLIC=https://example.com/
+OTHER_WINDOW_TAB=https://other-window.example.com/
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; true" || fail "could not reach the dev Host"
+WINDOW=$(on_host "tmux display-message -p -t '$SESSION:0' '#{window_id}'")
+stored-tabs "$WINDOW" 1 http://localhost:3000/ "$BY_ADDRESS" "$BY_NAME" "$PUBLIC" "$DOWN" http://192.168.1.10:8080/ \
+  || fail "could not store the Tabs of $WINDOW"
+# A second Window, behind the first, whose Tab the Title Sheet must not list.
+OTHER=$(on_host "tmux new-window -d -P -F '#{window_id}' -t '$SESSION:'") || fail "could not add a second Window"
+stored-tabs "$OTHER" 0 "$OTHER_WINDOW_TAB" || fail "could not store the Tabs of $OTHER"
 attach
 
 echo "1/6  the Title Sheet lists the Tabs the phone can reach, and no other"
 open_title_sheet
-agent-device wait 'label="Tab By address"' 15000 >/dev/null 2>&1 \
+agent-device wait "label=\"Tab $BY_ADDRESS\"" 15000 >/dev/null 2>&1 \
   || fail "the Title Sheet does not list the Tab at the Tailscale address"
-agent-device is exists "label=\"Tab http://${NAME:-$FAKE_NAME}:$PORT/\"" >/dev/null 2>&1 \
+agent-device is exists "label=\"Tab $BY_NAME\"" >/dev/null 2>&1 \
   || fail "the Title Sheet does not list the Tab at the *.ts.net name"
 agent-device is exists 'text="Browser tabs"' >/dev/null 2>&1 || fail "the Tabs have no Browser tabs header"
-agent-device is exists 'label="Tab Public page"' >/dev/null 2>&1 \
+agent-device is exists "label=\"Tab $PUBLIC\"" >/dev/null 2>&1 \
   || fail "the Title Sheet does not list the Tab at a public site"
-agent-device is exists 'label="Tab Localhost page"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at localhost"
-agent-device is exists 'label="Tab LAN page"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at a LAN address"
-echo "     By address, the *.ts.net Tab and the public site listed; localhost and the LAN address left out"
+agent-device is exists 'label="Tab http://localhost:3000/"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at localhost"
+agent-device is exists 'label="Tab http://192.168.1.10:8080/"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at a LAN address"
+echo "     the Tailscale address, the *.ts.net Tab and the public site listed; localhost and the LAN address left out"
 
-echo "2/6  the app asked for the Tabs of the Window on screen"
-WINDOW=$(on_host "tmux display-message -p -t '$SESSION:' '#{window_id}'")
-grep -qx "browser tabs --window $WINDOW --json" "$ROOT/browser-calls" \
-  || fail "the Host was not asked for the Tabs of $WINDOW: $(cat "$ROOT/browser-calls" 2>/dev/null)"
-echo "     browser tabs --window $WINDOW --json"
+echo "2/6  the Tabs are those of the Window on screen"
+agent-device is exists "label=\"Tab $OTHER_WINDOW_TAB\"" >/dev/null 2>&1 \
+  && fail "the Title Sheet lists a Tab of $OTHER, which is not on screen"
+grep -q "^browser tabs" "$ROOT/browser-calls" 2>/dev/null && fail "the app ran \`muxify browser tabs\`"
+echo "     the Tabs of $WINDOW, from the Host Server, and none of $OTHER"
 
 echo "3/6  a tap on a Tab loads its page in the Web View"
-open_tab "By address"
+open_tab "$BY_ADDRESS"
 echo "     http://<Tailscale address>:$PORT/ loaded, with its title"
 if [ -n "$NAME" ]; then
   open_title_sheet
@@ -167,9 +169,9 @@ echo "     one Client on the Host, as before"
 
 echo "5/6  a page that does not answer shows the reason, and Try again loads it"
 open_title_sheet
-agent-device wait 'label="Tab Down page"' 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Down page"
+agent-device wait "label=\"Tab $DOWN\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the page that is down"
 sleep 1
-agent-device press 'label="Tab Down page"' >/dev/null 2>&1
+agent-device press "label=\"Tab $DOWN\"" >/dev/null 2>&1
 agent-device wait 'label="Try again"' 20000 >/dev/null 2>&1 || fail "the Web View did not say that the page is down"
 agent-device is exists 'label="Could not connect to the server."' >/dev/null 2>&1 \
   || fail "the Web View does not give the reason"
@@ -181,17 +183,11 @@ back
 echo "     Could not connect to the server, then the page"
 
 echo "6/6  a Window with no Browser shows no Browser tabs"
-rm "$ROOT/browser-tabs.json"
-CALLS=$(wc -l <"$ROOT/browser-calls")
+stored-tabs "$WINDOW" || fail "could not remove the Tabs of $WINDOW"
 open_title_sheet
-for _ in $(seq 50); do
-  [ "$(wc -l <"$ROOT/browser-calls")" -gt "$CALLS" ] && break
-  sleep 0.2
-done
-[ "$(wc -l <"$ROOT/browser-calls")" -gt "$CALLS" ] || fail "the Title Sheet did not ask for the Tabs again"
-sleep 2
+sleep 3
 agent-device is exists 'text="Browser tabs"' >/dev/null 2>&1 && fail "the Title Sheet still shows Browser tabs"
-agent-device is exists 'label="Tab By address"' >/dev/null 2>&1 && fail "the Title Sheet still lists a Tab"
+agent-device is exists "label=\"Tab $BY_ADDRESS\"" >/dev/null 2>&1 && fail "the Title Sheet still lists a Tab"
 agent-device is exists 'label="Close Choose"' >/dev/null 2>&1 || fail "the Title Sheet closed"
 agent-device press 'label="Close Choose"' >/dev/null 2>&1
 

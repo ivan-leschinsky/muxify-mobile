@@ -13,13 +13,15 @@ import { useTitleSheet } from './use-title-sheet';
 
 /**
  * The Title Sheet of an Attach with a Topic, through a fake Host Server: the
- * real `topic` subscription and parser, the real hook and sheet. The Attach
- * stands in for the real one, which settles each read the same way
- * (`settledTopic`) and is tested on its own in `attach.test.ts`.
+ * real `topic` subscription and parser, the real `browser_tabs` read and
+ * reachability filter, the real hook and sheet. The Attach stands in for the
+ * real one, which settles each read the same way (`settledTopic`) and is
+ * tested on its own in `attach.test.ts`.
  */
 
 let mockFocused = true;
 let mockServer: HostServer | null = null;
+let mockAttach: Attach | null = null;
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -52,18 +54,35 @@ jest.mock('@/hooks/use-host-reading', () => ({
   useHostReading: () => ({ topics: { kind: 'unasked' }, listing: { phase: 'idle' }, read: async () => {} }),
 }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn() }) }));
-jest.mock('@/browser/read-browser-tabs', () => ({ readBrowserTabs: async () => ({ kind: 'listed', tabs: [] }) }));
-jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => ({ current: () => null }) }));
+const mockHolder = { current: () => mockAttach };
+jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => mockHolder }));
 jest.mock('@osuki-dev/react-native-ssh', () => ({ connect: jest.fn() }));
-jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ hostServer: () => mockServer }) }));
+jest.mock('@/storage/device-store', () => ({
+  deviceHostStore: () => ({ load: async () => ({ hosts: [{ id: 'host', displayName: 'Dev Host' }] }) }),
+}));
+jest.mock('@/tmux/ssh-connection', () => ({
+  appConnections: () => ({
+    hostServer: () => mockServer,
+    onServer: (_host: unknown, work: (server: HostServer) => Promise<unknown>) => work(mockServer!),
+  }),
+}));
 
-/** A live Host Server whose `topic` subscriptions the test pushes into. */
+/**
+ * A live Host Server whose `topic` subscriptions the test pushes into, and
+ * which answers `browser_tabs` with `tabs`.
+ */
 function fakeServer() {
   const subscriptions: { payload: object; onItem: (item: unknown) => void; cancelled: boolean }[] = [];
+  const requests: object[] = [];
+  const fake = { tabs: [] as object[] };
   const server: HostServer = {
     state: () => ({ kind: 'live', build: 'muxify 1', protocol: 1 }),
     onState: () => () => {},
-    request: () => Object.assign(new Promise<unknown>(() => {}), { cancel: () => {} }),
+    request: (payload) => {
+      requests.push(payload);
+      const answer = 'browser_tabs' in payload ? Promise.resolve(fake.tabs) : new Promise<unknown>(() => {});
+      return Object.assign(answer, { cancel: () => {} });
+    },
     subscribe: (payload, onItem) => {
       const entry = { payload, onItem, cancelled: false };
       subscriptions.push(entry);
@@ -72,11 +91,12 @@ function fakeServer() {
     installAnswered: () => {},
     close: () => {},
   };
-  return {
+  return Object.assign(fake, {
     server,
     subscriptions,
+    requests,
     push: (item: unknown) => act(async () => { subscriptions[subscriptions.length - 1]!.onItem(item); }),
-  };
+  });
 }
 
 /** An Attach in Topic `t`, on Session `game/ship`, whose `showTopic` follows the Topic on the Host Server. */
@@ -85,7 +105,11 @@ function fakeAttach(): Attach {
   let state = {
     sessionName: 'game/ship',
     topic: { id: 't' as TopicId, view: TOPIC_UNASKED },
-    topology: { windows: [{ id: '@2', index: 1, name: 'claude', active: true, paneCount: 1, command: 'claude' }], panes: [] },
+    topology: {
+      windows: [{ id: '@2', index: 1, name: 'claude', active: true, paneCount: 1, command: 'claude' }],
+      activeWindow: { id: '@2', index: 1, name: 'claude', active: true, paneCount: 1, command: 'claude' },
+      panes: [],
+    },
     sessions: [], previews: new Map(), typing: { kind: 'open' },
   } as unknown as AttachState;
   const settle = (read: TopicRead) => {
@@ -144,6 +168,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
 async function mount(attach = fakeAttach()) {
+  mockAttach = attach;
   await act(async () => { renderer = create(<Screen attach={attach} />); });
 }
 const texts = () => renderer.root.findAllByType(Text).map((node) => node.props.children);
@@ -190,4 +215,28 @@ it('ends the subscription when the screen stops showing the Topic', async () => 
   expect(fake.subscriptions.map((entry) => entry.cancelled)).toEqual([true, false]);
   await act(async () => renderer.unmount());
   expect(fake.subscriptions.every((entry) => entry.cancelled)).toBe(true);
+});
+
+it("lists the reachable Tabs that the Host Server answers for the Window on screen", async () => {
+  fake.tabs = [
+    { active: false, id: '00000000-0000-0000-0000-000000000000', title: '', url: 'http://localhost:3000/' },
+    { active: true, id: '00000000-0000-0000-0000-000000000001', title: '', url: 'http://mac.tail1234.ts.net:3000/' },
+    { active: false, id: '00000000-0000-0000-0000-000000000002', title: 'GitHub', url: 'https://github.com/' },
+    { active: false, id: '00000000-0000-0000-0000-000000000003', title: '', url: 'http://192.168.1.10:8080/' },
+  ];
+  await mount();
+  await fake.push(topicItem('Ship', 'claude', 'working'));
+
+  expect(fake.requests).toEqual([{ browser_tabs: { window: '@2' } }]);
+  expect(texts()).toContain('Browser tabs');
+  expect(labels()).toEqual(expect.arrayContaining(['Tab http://mac.tail1234.ts.net:3000/', 'Tab GitHub']));
+  expect(labels().filter((label: string | undefined) => label?.startsWith('Tab '))).toHaveLength(2);
+});
+
+it('lists no Browser tabs for a Window whose Browser has none', async () => {
+  await mount();
+  await fake.push(topicItem('Ship', 'claude', 'working'));
+
+  expect(fake.requests).toEqual([{ browser_tabs: { window: '@2' } }]);
+  expect(texts()).not.toContain('Browser tabs');
 });

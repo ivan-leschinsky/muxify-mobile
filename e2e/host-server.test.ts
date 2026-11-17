@@ -19,6 +19,7 @@ import { execFile, spawn, type ChildProcess } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 
+import { browserTabsOn } from '@/browser/read-browser-tabs';
 import { createHostServer, HostServerError, type HostServer, type HostServerState, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import { shellQuote } from '@/tmux/commands';
@@ -38,6 +39,7 @@ import {
 import { newRequestId, REQUEST_MISMATCH_ERROR } from '@/topics/request';
 
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
+jest.mock('@/storage/device-store', () => ({}));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => { throw new Error('this suite gives its own Connections'); } }));
 
 const MUXIFY =
@@ -245,6 +247,34 @@ describe('the Host Server link against a real muxify server', () => {
     try {
       await goToRows(server, folder);
     } finally {
+      server.close();
+    }
+  }, 60_000);
+
+  it("lists a Window's stored Browser Tabs, only those the phone can reach", async () => {
+    const HOST = { id: 'sandbox', displayName: 'Sandbox' } as Host;
+    const server = startServer();
+    await until(server, ['live']);
+    const connections: ServerConnections = { onServer: (_host, work) => work(server) };
+    const window = (await runInShell("tmux new-window -d -P -F '#{window_id}' -t 0:")).stdout.trim();
+    // As desktop Muxify stores them: the URLs in the Window's options, with the active Tab's index.
+    const urls = ['http://localhost:3000/', 'http://100.101.102.103:8080/', 'https://github.com/', 'http://192.168.1.10:8080/'];
+    await runInShell(`tmux set-option -wq -t ${shellQuote(window)} @muxify_tabs ${shellQuote(urls.join(' '))} \\; ` +
+      `set-option -wq -t ${shellQuote(window)} @muxify_active_tab 1`);
+    try {
+      expect(await browserTabsOn(HOST, window, connections)).toEqual({
+        kind: 'listed',
+        tabs: [
+          { id: expect.any(String), url: 'http://100.101.102.103:8080/', title: '', active: true },
+          { id: expect.any(String), url: 'https://github.com/', title: '', active: false },
+        ],
+      });
+      // A Window whose Browser has no Tabs lists none; a Window that is gone fails with the Host's reason.
+      const plain = (await runInShell("tmux display -p -t 0:0 '#{window_id}'")).stdout.trim();
+      expect(await browserTabsOn(HOST, plain, connections)).toEqual({ kind: 'listed', tabs: [] });
+      expect(await browserTabsOn(HOST, '@9999', connections)).toEqual({ kind: 'failed', error: expect.stringContaining('@9999') });
+    } finally {
+      await runInShell(`tmux kill-window -t ${shellQuote(window)}`);
       server.close();
     }
   }, 60_000);
