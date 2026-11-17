@@ -51,8 +51,8 @@ const topic: TopicDetail = {
 describe('sessionTitleRows', () => {
   it('lists every Window with its program, and marks the one on screen', () => {
     expect(sessionTitleRows(topology)).toEqual([
-      { kind: 'window', index: 0, name: 'shell', program: 'bash', mark: null, current: false },
-      { kind: 'window', index: 1, name: 'editor', program: 'nvim', mark: null, current: true },
+      { kind: 'window', id: '@0', index: 0, name: 'shell', program: 'bash', mark: null, current: false },
+      { kind: 'window', id: '@1', index: 1, name: 'editor', program: 'nvim', mark: null, current: true },
     ]);
   });
 });
@@ -70,14 +70,14 @@ describe('topicTitleRows', () => {
 
   it('gives the attached Session\'s Windows the program and the active mark from the Topology', () => {
     expect(rows[0].kind === 'session' && rows[0].windows).toEqual([
-      { kind: 'window', index: 0, name: 'shell', program: 'bash', mark: null, current: false },
-      { kind: 'window', index: 1, name: 'editor', program: 'nvim', mark: 'working', current: true },
+      { kind: 'window', id: '@0', index: 0, name: 'shell', program: 'bash', mark: null, current: false },
+      { kind: 'window', id: '@1', index: 1, name: 'editor', program: 'nvim', mark: 'working', current: true },
     ]);
   });
 
   it('shows another Session\'s Windows with the Agent mark and no program', () => {
     expect(rows[1].kind === 'session' && rows[1].windows).toEqual([
-      { kind: 'window', index: 0, name: 'logs', program: null, mark: 'done', current: false },
+      { kind: 'window', id: 'w2', index: 0, name: 'logs', program: null, mark: 'done', current: false },
     ]);
   });
 

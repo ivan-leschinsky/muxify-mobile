@@ -12,6 +12,7 @@ import {
   type OpenableRow,
 } from './host-screen';
 import type { Session } from '@/tmux/tmux-client';
+import type { SessionOnHost } from '@/topics/tmux-order';
 import type {
   Card,
   EnvironmentSnapshot,
@@ -35,8 +36,8 @@ import {
 
 const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
-const sessionRow = (name: string, topicLabel: string | null = null, windowCount?: number): HostScreenRow =>
-  ({ kind: 'session', name, windowCount, topicLabel });
+const sessionRow = (name: string, topicLabel: string | null = null, windowCount?: number, onHost?: SessionOnHost): HostScreenRow =>
+  ({ kind: 'session', name, windowCount, topicLabel, ...(onHost === undefined ? {} : { onHost }) });
 const note = (text: string) => ({ kind: 'note', text }) as const;
 
 const INSTALL_RUNNING: HostCliState = { kind: 'running' };
@@ -632,7 +633,11 @@ describe('the Sessions tab of the Host Screen', () => {
 
   it('lists every running Session in the order of the Listing, with its Topic under the name, and no Bench', () => {
     expect(sessions(answered([running('zeta', 3), running('alpha'), running('benched', 2)]), withTopics)).toEqual([
-      sessionsSection(sessionRow('zeta', 'Topic t1', 3), sessionRow('alpha', 'No Topic', 1), sessionRow('benched', 'Topic b1', 2)),
+      sessionsSection(
+        sessionRow('zeta', 'Topic t1', 3, { id: sid('$1'), inTopic: true }),
+        sessionRow('alpha', 'No Topic', 1, { id: sid('$2'), inTopic: false }),
+        sessionRow('benched', 'Topic b1', 2, { id: sid('$3'), inTopic: true }),
+      ),
     ]);
   });
 
@@ -647,7 +652,7 @@ describe('the Sessions tab of the Host Screen', () => {
       { id: '@2', index: 1, name: 'vim', active: false, mark: null },
     ] }] });
     expect(runningSessions(answered([{ name: 'main', windowCount: undefined }]), topics)).toEqual([
-      { name: 'main', windowCount: 2, topicLabel: null },
+      { name: 'main', windowCount: 2, topicLabel: null, onHost: { id: sid('$1'), inTopic: false } },
     ]);
   });
 

@@ -141,6 +141,16 @@ function AppStack() {
             title: 'Add a Session',
           }}
         />
+        <Stack.Screen
+          name="rename"
+          options={{
+            // One field, with what it renames in view behind it.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.4],
+            sheetGrabberVisible: true,
+            title: 'Rename',
+          }}
+        />
         {/* The title is the page's own, which the screen sets when it has one. */}
         <Stack.Screen name="web-view" options={{ title: '' }} />
         <Stack.Screen

@@ -1,6 +1,7 @@
-import { useFocusEffect, useNavigation } from 'expo-router';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { RenameParams } from '@/app/rename';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
 import type { PlaceTab } from '@/storage/records';
@@ -11,9 +12,11 @@ import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { lastAnswer } from '@/domain/host-listing';
 import { topicSections } from '@/domain/host-screen';
-import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
+import { sessionTitleRows, topicTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
 import { useHostEntry } from '@/hooks/use-host-entry';
+import { useLiveListing } from '@/hooks/use-host-listing';
 import { useHostReading } from '@/hooks/use-host-reading';
+import { useTmuxWrites } from '@/hooks/use-tmux-writes';
 import { describeError } from '@/lib/describe-error';
 import type { ChooserLists } from '@/settings/settings';
 import { useChooserLists, useSettings } from '@/settings/settings-context';
@@ -21,6 +24,14 @@ import type { Attach, AttachState } from '@/tmux/attach';
 import { useAttachHolder } from '@/tmux/attach-context';
 import { trimPreview } from '@/tmux/preview';
 import { lastTopic } from '@/topics/topic-detail';
+import {
+  sessionActions,
+  TMUX_MENU_LABEL,
+  TMUX_ORDER_ICON,
+  type SessionAction,
+  type SessionOnHost,
+  type WindowAction,
+} from '@/topics/tmux-order';
 
 const say = speakingAs(deviceLog(), 'screen');
 
@@ -52,6 +63,7 @@ export interface TitleSheetOptions {
 export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, beforeOpen, onReplacingStopped }: TitleSheetOptions) {
   const holder = useAttachHolder();
   const navigation = useNavigation();
+  const router = useRouter();
   const { appearance, palette: chrome } = useSettings();
   const [titleSheet, setTitleSheet] = useState<TitleSheetState>({ open: false });
   const chooserRevision = useRef(0);
@@ -79,6 +91,12 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     if (handover.current) clearTimeout(handover.current);
     closeChooser();
   }, [closeChooser]));
+  /** Closes the sheet, and runs `next` once it has left, so that another sheet can be presented. */
+  const handOver = useCallback((next: () => void) => {
+    closeChooser();
+    if (handover.current) clearTimeout(handover.current);
+    handover.current = setTimeout(next, SHEET_HANDOVER_MS);
+  }, [closeChooser]);
   const openTopic = useCallback((row: TopicRow) => {
     // The Topic the user is in: nothing to open, and a restore would show its page again.
     if (row.seed.id === state?.topic?.id) {
@@ -93,15 +111,62 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       });
       return;
     }
-    closeChooser();
-    if (handover.current) clearTimeout(handover.current);
     const session = state?.sessionName;
-    handover.current = setTimeout(() => {
+    handOver(() => {
       if (holder.current() === attach && attach?.state().sessionName === session && navigation.isFocused()) {
         hostEntry.openTopic(row.seed);
       }
-    }, SHEET_HANDOVER_MS);
-  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName, state?.topic?.id]);
+    });
+  }, [attach, closeChooser, handOver, holder, hostEntry, navigation, state?.sessionName, state?.topic?.id]);
+
+  /**
+   * The Session and Window Actions, offered while the Host Server is live: it
+   * knows each Session's id and Topic. Sessions only offers none.
+   */
+  const live = useLiveListing(hostId ?? '');
+  const served = live?.server.kind === 'live' ? live.snapshot : null;
+  const onHost = useMemo(
+    () => new Map<string, SessionOnHost>(served?.sessions.map((session) => [session.name, { id: session.id, inTopic: session.topic !== null }])),
+    [served],
+  );
+  const tmuxWrites = useTmuxWrites(hostId ?? '');
+  const rename = useCallback((params: Omit<RenameParams, 'hostId'>) => {
+    if (!hostId) return;
+    handOver(() => {
+      if (navigation.isFocused()) router.push({ pathname: '/rename', params: { hostId, ...params } });
+    });
+  }, [handOver, hostId, navigation, router]);
+  const actOnSession = (name: string, action: string) => {
+    const session = onHost.get(name)?.id;
+    if (session === undefined) return;
+    switch (action as SessionAction) {
+      case 'rename-session':
+        rename({ kind: 'session', id: session, name });
+        break;
+      case 'remove-from-topic':
+        void tmuxWrites.order({ kind: 'remove-from-topic', session });
+        break;
+      case 'stop-session':
+        tmuxWrites.confirm({ kind: 'stop-session', session }, name);
+        break;
+    }
+  };
+  const actOnWindow = (row: TitleWindowRow, action: WindowAction) => {
+    if (action === 'rename-window') rename({ kind: 'window', id: row.id, name: row.name });
+    else tmuxWrites.confirm({ kind: 'close-window', window: row.id }, row.name);
+  };
+  /** A Session card with its menu, and its spinner while one of its Actions runs. A card's id is its Session's name. */
+  const withActions = (card: PreviewCard): PreviewCard => {
+    const session = onHost.get(card.id);
+    if (session === undefined) return card;
+    return {
+      ...card,
+      busy: card.busy || tmuxWrites.writing(session.id),
+      menu: sessionActions(session).map((action) => ({
+        id: action, label: TMUX_MENU_LABEL[action], systemImage: TMUX_ORDER_ICON[action], destructive: action === 'stop-session',
+      })),
+    };
+  };
 
   /** The Session a switch is on its way to, whose row shows it is busy. */
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
@@ -244,12 +309,14 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       ? (titleSheet.error ?? (topicView?.kind === 'failed' ? topicView.error : undefined))
       : undefined,
     sessions: {
-      cards: sessionCards,
+      cards: sessionCards.map(withActions),
       loading: sessionsFromHost ? listing.phase === 'reading' : state?.sessions == null,
       onSelect: selectSession,
+      onAction: actOnSession,
     },
     topics: topicsOn ? { sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost() } : undefined,
     onPick: pickTitleRow,
+    onWindowAction: served === null ? undefined : actOnWindow,
     tabs: windowTabs?.revision === titleRevision && windowTabs.session === sessionName && windowTabs.window === activeWindowId
       ? windowTabs.tabs
       : NO_TABS,

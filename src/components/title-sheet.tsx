@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   BottomSheet,
   Button,
+  ContextMenu,
   Group,
   Host,
   HStack,
@@ -43,6 +44,7 @@ import { TAPPABLE_ROW } from './tappable-row';
 import type { TopicDetail } from '@/topics/topic-detail';
 import { CHOOSER_LIST_NAMES, type ChooserList, type ChooserLists } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
+import { TMUX_MENU_LABEL, TMUX_ORDER_ICON, WINDOW_ACTIONS, type WindowAction } from '@/topics/tmux-order';
 
 import { SheetHeader, SheetNote } from './sheet-chrome';
 import { MarkImage } from './topic-marks';
@@ -67,9 +69,12 @@ export interface TitleSheetProps {
   /** A Topic read in flight with nothing read before it. */
   loading: boolean;
   error?: string;
-  sessions: { cards: PreviewCard[]; loading: boolean; onSelect: (id: string) => void };
+  /** `onAction` is an item of a Session card's long-press menu, which `PreviewCard.menu` holds. */
+  sessions: { cards: PreviewCard[]; loading: boolean; onSelect: (id: string) => void; onAction?: (id: string, action: string) => void };
   topics?: SheetTopics;
   onPick: (pick: TitlePick) => void;
+  /** An Action of a Window row's long-press menu. Undefined while the Host Server offers none, as in Sessions only. */
+  onWindowAction?: (row: TitleWindowRow, action: WindowAction) => void;
   /** The Browser Tabs of the Window on screen that the phone can open. */
   tabs: BrowserTab[];
   onOpenTab: (tab: BrowserTab) => void;
@@ -97,6 +102,7 @@ export function TitleSheet({
   sessions,
   topics,
   onPick,
+  onWindowAction,
   tabs,
   onOpenTab,
 }: TitleSheetProps) {
@@ -149,7 +155,12 @@ export function TitleSheet({
                 {sessions.loading && sessions.cards.length === 0 ? <SheetNote palette={palette}>Reading…</SheetNote> : null}
                 {!sessions.loading && sessions.cards.length === 0 ? <SheetNote palette={palette}>No Sessions</SheetNote> : null}
                 <ScrollView>
-                  <SessionPreviews cards={sessions.cards} width={measuredWidth ?? screen.width} onSelect={sessions.onSelect} />
+                  <SessionPreviews
+                    cards={sessions.cards}
+                    width={measuredWidth ?? screen.width}
+                    onSelect={sessions.onSelect}
+                    onAction={sessions.onAction}
+                  />
                 </ScrollView>
               </>}
               {selectedTab === 'topics' && <ScrollView>
@@ -192,6 +203,7 @@ export function TitleSheet({
                             palette={palette}
                             chrome={chrome}
                             onPress={() => onPick({ session: null, window: row.index })}
+                            onAction={onWindowAction}
                           />
                         ) : (
                           <VStack key={row.name} spacing={0} alignment="leading">
@@ -222,6 +234,7 @@ export function TitleSheet({
                                 chrome={chrome}
                                 indented
                                 onPress={() => onPick({ session: row.name, window: window.index })}
+                                onAction={onWindowAction}
                               />
                             ))}
                           </VStack>
@@ -260,14 +273,17 @@ function WindowRow({
   chrome,
   indented,
   onPress,
+  onAction,
 }: {
   row: TitleWindowRow;
   palette: SheetPalette;
   chrome: Appearance;
   indented?: boolean;
   onPress: () => void;
+  /** Rename Window… and Close Window… in its long-press menu. No menu when undefined. */
+  onAction?: (row: TitleWindowRow, action: WindowAction) => void;
 }) {
-  return (
+  const button = (
     <Button onPress={onPress} modifiers={[buttonStyle('plain'), accessibilityLabel(row.name)]}>
       <HStack
         spacing={10}
@@ -302,6 +318,24 @@ function WindowRow({
         {row.mark === null ? null : <MarkImage mark={row.mark} palette={chrome} />}
       </HStack>
     </Button>
+  );
+  if (onAction === undefined) return button;
+  return (
+    <ContextMenu>
+      <ContextMenu.Items>
+        {WINDOW_ACTIONS.map((action) => (
+          <Button
+            key={action}
+            label={TMUX_MENU_LABEL[action]}
+            systemImage={TMUX_ORDER_ICON[action]}
+            role={action === 'close-window' ? 'destructive' : undefined}
+            onPress={() => onAction(row, action)}
+            modifiers={[accessibilityLabel(TMUX_MENU_LABEL[action])]}
+          />
+        ))}
+      </ContextMenu.Items>
+      <ContextMenu.Trigger>{button}</ContextMenu.Trigger>
+    </ContextMenu>
   );
 }
 

@@ -1,9 +1,13 @@
 import React from 'react';
+import { Alert, type AlertButton } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, Text } from '@expo/ui/swift-ui';
 
 import { TitleSheet } from '@/components/title-sheet';
 import type { HostServer } from '@/ssh/host-server';
+import type { LiveListing } from '@/ssh/host-listing-feed';
+import { snapshotPush } from '@/test-support/fake-host-server';
+import { parseEnvironment } from '@/topics/environment';
 import type { Attach, AttachState } from '@/tmux/attach';
 import { TOPIC_GONE, settledTopic, TOPIC_UNASKED, type TopicRead } from '@/topics/topic-detail';
 import type { TopicId } from '@/topics/environment';
@@ -22,22 +26,31 @@ import { useTitleSheet } from './use-title-sheet';
 let mockFocused = true;
 let mockServer: HostServer | null = null;
 let mockAttach: Attach | null = null;
+/** The Listing the Host Server of the Connection pushed, which offers the Session and Window Actions. */
+let mockListing: LiveListing | null = null;
+let mockLists = ['windows'];
+const mockRouter = { push: jest.fn() };
 
 jest.mock('expo-router', () => {
   const React = require('react');
   return {
     useNavigation: () => ({ isFocused: () => mockFocused }),
+    useRouter: () => mockRouter,
     useFocusEffect: (effect: () => (() => void) | void) => {
       const focused = mockFocused;
       React.useEffect(() => (focused ? effect() : undefined), [effect, focused]);
     },
   };
 });
-jest.mock('@expo/ui/swift-ui', () => ({
-  BottomSheet: 'BottomSheet', Button: 'Button', Divider: 'Divider', Group: 'Group', Host: 'Host',
-  HStack: 'HStack', Image: 'Image', Picker: 'Picker', ScrollView: 'ScrollView', Spacer: 'Spacer',
-  Text: 'Text', Toggle: 'Toggle', VStack: 'VStack', ZStack: 'ZStack',
-}));
+jest.mock('@expo/ui/swift-ui', () => {
+  const through = ({ children }: { children?: React.ReactNode }) => children;
+  return {
+    BottomSheet: 'BottomSheet', Button: 'Button', Divider: 'Divider', Group: 'Group', Host: 'Host',
+    HStack: 'HStack', Image: 'Image', Picker: 'Picker', ScrollView: 'ScrollView', Spacer: 'Spacer',
+    Text: 'Text', Toggle: 'Toggle', VStack: 'VStack', ZStack: 'ZStack', ProgressView: 'ProgressView',
+    ContextMenu: Object.assign(through, { Items: through, Trigger: through }),
+  };
+});
 jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, {
   get: (_, name) => name === 'shapes' ? { rectangle: () => 'rectangle' } : (value: unknown) => ({ name, value }),
 }));
@@ -48,7 +61,7 @@ jest.mock('@/settings/settings-context', () => ({
     appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark,
     sheetPalette: require('@/constants/app-theme').sheetPaletteFor('ghostty'),
   }),
-  useChooserLists: () => ['windows'],
+  useChooserLists: () => mockLists,
 }));
 jest.mock('@/hooks/use-host-reading', () => ({
   useHostReading: () => ({ topics: { kind: 'unasked' }, listing: { phase: 'idle' }, read: async () => {} }),
@@ -64,6 +77,8 @@ jest.mock('@/tmux/ssh-connection', () => ({
   appConnections: () => ({
     hostServer: () => mockServer,
     onServer: (_host: unknown, work: (server: HostServer) => Promise<unknown>) => work(mockServer!),
+    listing: () => mockListing,
+    subscribeListing: () => () => {},
   }),
 }));
 
@@ -80,7 +95,9 @@ function fakeServer() {
     onState: () => () => {},
     request: (payload) => {
       requests.push(payload);
-      const answer = 'browser_tabs' in payload ? Promise.resolve(fake.tabs) : new Promise<unknown>(() => {});
+      const answer = 'browser_tabs' in payload ? Promise.resolve(fake.tabs)
+        : 'environment' in payload ? Promise.resolve({ changed: {} })
+          : new Promise<unknown>(() => {});
       return Object.assign(answer, { cancel: () => {} });
     },
     subscribe: (payload, onItem) => {
@@ -100,7 +117,7 @@ function fakeServer() {
 }
 
 /** An Attach in Topic `t`, on Session `game/ship`, whose `showTopic` follows the Topic on the Host Server. */
-function fakeAttach(): Attach {
+function fakeAttach(sessions: { name: string; windowCount: number }[] = []): Attach {
   const listeners = new Set<(state: AttachState) => void>();
   let state = {
     sessionName: 'game/ship',
@@ -110,7 +127,7 @@ function fakeAttach(): Attach {
       activeWindow: { id: '@2', index: 1, name: 'claude', active: true, paneCount: 1, command: 'claude' },
       panes: [],
     },
-    sessions: [], previews: new Map(), typing: { kind: 'open' },
+    sessions, previews: new Map(), typing: { kind: 'open' },
   } as unknown as AttachState;
   const settle = (read: TopicRead) => {
     state = { ...state, topic: { id: state.topic!.id, view: settledTopic(state.topic!.view, read) } };
@@ -164,6 +181,9 @@ beforeEach(() => {
   mockFocused = true;
   fake = fakeServer();
   mockServer = fake.server;
+  mockListing = null;
+  mockLists = ['windows'];
+  jest.clearAllMocks();
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
@@ -239,4 +259,86 @@ it('lists no Browser tabs for a Window whose Browser has none', async () => {
 
   expect(fake.requests).toEqual([{ browser_tabs: { window: '@2' } }]);
   expect(texts()).not.toContain('Browser tabs');
+});
+
+describe('the Session and Window Actions', () => {
+  /** The Host Server is live, and its Listing has `game/ship` in Topic `t` and `app` in no Topic. */
+  const live = (): LiveListing => ({
+    server: { kind: 'live', build: 'muxify 1', protocol: 1 },
+    snapshot: parseEnvironment(snapshotPush({
+      topics: [{ id: 't', label: 'Ship', state: 'live' }],
+      sessions: [{ id: '$1', name: 'game/ship', topic: 't' }, { id: '$2', name: 'app' }],
+    })),
+  });
+  const button = (label: string, nth = 0) => renderer.root.findAllByType(Button).filter((node) =>
+    node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label))[nth]!;
+  const writes = () => fake.requests.flatMap((payload) => ('environment' in payload ? [(payload as { environment: object }).environment] : []));
+  const confirmed = async (title: string) => {
+    const alert = (Alert.alert as jest.Mock).mock.calls.at(-1)!;
+    expect(alert[0]).toBe(title);
+    const buttons = alert[2] as AlertButton[];
+    expect(buttons.map((choice) => [choice.text, choice.style])).toEqual([[expect.any(String), 'destructive'], ['Cancel', 'cancel']]);
+    await act(async () => { buttons[0]!.onPress!(); });
+  };
+  beforeEach(() => { jest.spyOn(Alert, 'alert').mockImplementation(() => {}); });
+
+  it('offers Rename Window and Close Window on each Window, asks before Close, and sends it on the Window', async () => {
+    mockListing = live();
+    await mount();
+    await fake.push(topicItem('Ship', 'claude', 'working'));
+    expect(labels().filter((label: string) => label.endsWith('Window…'))).toEqual(
+      ['Rename Window…', 'Close Window…', 'Rename Window…', 'Close Window…']);
+
+    await act(async () => { button('Close Window…').props.onPress(); });
+    expect(writes()).toEqual([]);
+    await confirmed('Close claude?');
+    expect(writes()).toEqual([{ version: 2, command: { kill_window: {} }, target: { window: '@2' }, request: expect.any(String) }]);
+  });
+
+  it('closes the sheet and opens the name sheet for Rename Window', async () => {
+    mockListing = live();
+    await mount();
+    await fake.push(topicItem('Ship', 'claude', 'working'));
+
+    await act(async () => { button('Rename Window…', 1).props.onPress(); });
+    expect(renderer.root.findByType('BottomSheet' as never).props.isPresented).toBe(false);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 500)); });
+    expect(mockRouter.push).toHaveBeenCalledWith({
+      pathname: '/rename', params: { hostId: 'host', kind: 'window', id: '@5', name: 'claude notes' },
+    });
+    expect(writes()).toEqual([]);
+  });
+
+  it('offers Remove from Topic only on a Session in a Topic, and asks before Stop Session', async () => {
+    mockListing = live();
+    mockLists = ['sessions'];
+    await mount(fakeAttach([{ name: 'game/ship', windowCount: 1 }, { name: 'app', windowCount: 2 }]));
+    expect(labels().filter((label: string) => label !== 'Close Choose')).toEqual([
+      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'game/ship',
+      'Rename Session…', 'Stop Session…', 'app',
+    ]);
+
+    await act(async () => { button('Remove from Topic').props.onPress(); });
+    await act(async () => { button('Stop Session…', 1).props.onPress(); });
+    await confirmed('Stop app?');
+    expect(writes()).toEqual([
+      { version: 2, command: { remove_from_topic: {} }, target: { session: '$1' }, request: expect.any(String) },
+      { version: 2, command: { kill_session: {} }, target: { session: '$2' }, request: expect.any(String) },
+    ]);
+
+    await act(async () => { button('Rename Session…').props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 500)); });
+    expect(mockRouter.push).toHaveBeenCalledWith({
+      pathname: '/rename', params: { hostId: 'host', kind: 'session', id: '$1', name: 'game/ship' },
+    });
+  });
+
+  it('offers none of them in Sessions only', async () => {
+    mockListing = { server: { kind: 'sessions-only', reason: 'the Host Server did not answer' }, snapshot: null };
+    mockLists = ['sessions', 'windows'];
+    await mount(fakeAttach([{ name: 'game/ship', windowCount: 1 }]));
+    await fake.push(topicItem('Ship', 'claude', 'working'));
+    expect(labels()).toContain('game/ship');
+    expect(labels().filter((label: string) => label.endsWith('…') || label === 'Remove from Topic')).toEqual([]);
+  });
 });

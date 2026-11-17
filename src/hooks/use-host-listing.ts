@@ -7,6 +7,7 @@ import { answered, asking, refused, UNASKED, type Listing } from '@/domain/host-
 import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
+import type { LiveListing } from '@/ssh/host-listing-feed';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { EnvironmentSnapshot } from '@/topics/environment';
@@ -34,12 +35,7 @@ const say = speakingAs(deviceLog(), 'host');
  */
 export function useHostListing(hostId: string) {
   const connections = appConnections();
-  const live = useSyncExternalStore(
-    useCallback((changed: () => void) => connections.subscribeListing((which) => {
-      if (which === hostId) changed();
-    }), [connections, hostId]),
-    () => connections.listing(hostId),
-  );
+  const live = useLiveListing(hostId);
   const hostCli = useSyncExternalStore(
     useCallback((changed: () => void) => connections.subscribeHostCli(changed), [connections]),
     () => connections.hostCli(hostId),
@@ -126,4 +122,19 @@ export function useHostListing(hostId: string) {
     sessionsOnly: live?.server.kind === 'sessions-only',
     retry,
   };
+}
+
+/**
+ * The Listing that the Host Server of the Host's Connection pushes, and where
+ * that server stands, as it changes. It holds nothing: null while no
+ * Connection has a Host Server.
+ */
+export function useLiveListing(hostId: string): LiveListing | null {
+  const connections = appConnections();
+  return useSyncExternalStore(
+    useCallback((changed: () => void) => connections.subscribeListing((which) => {
+      if (which === hostId) changed();
+    }), [connections, hostId]),
+    () => connections.listing(hostId),
+  );
 }

@@ -38,6 +38,7 @@ import {
   type RowActions,
   type TopicRow,
 } from '@/components/host-screen-row-view';
+import type { RenameParams } from '@/app/rename';
 import { HostWriteRow } from '@/components/host-write-row';
 import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
@@ -54,12 +55,14 @@ import {
   type HostScreenSection,
   type HostScreenTab,
   type OpenableRow,
+  type SessionRow,
 } from '@/domain/host-screen';
 import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
+import { useTmuxWrites } from '@/hooks/use-tmux-writes';
 import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
@@ -80,6 +83,7 @@ import {
   type TopicAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
+import type { SessionAction } from '@/topics/tmux-order';
 import { recordVisit } from '@/topics/visit';
 
 const TAB_NAMES: Record<HostScreenTab, string> = { topics: 'Topics', sessions: 'Sessions' };
@@ -265,10 +269,23 @@ export default function HostScreen() {
     ]);
   };
 
+  const tmuxWrites = useTmuxWrites(id);
+  // Rename opens the name sheet, Stop asks first, and Remove from Topic goes at once.
+  const actOnSession = (row: SessionRow, action: SessionAction) => {
+    const session = row.onHost?.id;
+    if (session === undefined) return;
+    if (action === 'rename-session') {
+      const params: RenameParams = { hostId: id, kind: 'session', id: session, name: row.name };
+      router.push({ pathname: '/rename', params });
+    } else if (action === 'stop-session') tmuxWrites.confirm({ kind: 'stop-session', session }, row.name);
+    else void tmuxWrites.order({ kind: 'remove-from-topic', session });
+  };
+
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
-    isBusy: (topic) => hostEntry.busyTopic === topic || cardWrites.writing(topic as TopicId),
+    isBusy: (busy) => hostEntry.busyTopic === busy || cardWrites.writing(busy as TopicId) || tmuxWrites.writing(busy),
+    onSessionAction: actOnSession,
     onWake: (row, wake) => void cardWrites.order(row.id, { kind: 'wake', wake }),
     onTopicAction: (row, action) => void actFromMenu(row.id, action),
     onMove: startMove,
@@ -441,6 +458,12 @@ export default function HostScreen() {
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction hidden={hasGoTo || sessionsOnly} icon="folder.badge.plus" onPress={newTopic}>
             New Topic
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            hidden={!hasGoTo}
+            icon="envelope.open"
+            onPress={() => void tmuxWrites.order({ kind: 'mark-all-read' })}>
+            Mark All as Read
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/chooser-lists', params: { hostId: id } })}>
             Configure chooser

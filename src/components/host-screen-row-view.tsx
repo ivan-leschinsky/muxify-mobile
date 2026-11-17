@@ -16,6 +16,7 @@ import type { HostScreenRow, OpenableRow, SessionRow } from '@/domain/host-scree
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { menuActions, TOPIC_ACTION_ICON, TOPIC_ACTION_LABEL, type TopicAction } from '@/topics/topic-action';
+import { sessionActions, TMUX_MENU_LABEL, TMUX_ORDER_ICON, type SessionAction } from '@/topics/tmux-order';
 import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
 export type TopicRow = Extract<HostScreenRow, { kind: 'topic' }>;
@@ -25,8 +26,8 @@ export type OpenPlaceRow = Extract<HostScreenRow, { kind: 'open-place' }>;
 export interface RowActions {
   onOpenSession: (name: string) => void;
   onOpenTopic: (row: TopicRow) => void;
-  /** Whether a Topic card waits on something: its Session opening, or a write to the Host. */
-  isBusy?: (topicId: string) => boolean;
+  /** Whether a Topic card, or a Session row by its id, waits on something: its Session opening, or a write to the Host. */
+  isBusy?: (id: string) => boolean;
   /** Wakes a Dormant Topic from its long-press menu. A screen that does not pass it gives a Dormant card no wake items. */
   onWake?: (row: TopicRow, wake: Wake) => void;
   /** Sends one order of the long-press menu. A screen that does not pass it gives the card no order items. */
@@ -37,6 +38,11 @@ export interface RowActions {
   onSettle?: (row: TopicRow) => void;
   /** Asks how to Forget the Topic, from its long-press menu. A screen that does not pass it gives the card no Forget… item. */
   onForget?: (row: TopicRow) => void;
+  /**
+   * Sends one Action of a Session row's long-press menu. A screen that does
+   * not pass it, or a row the Host Server has not described, has no menu.
+   */
+  onSessionAction?: (row: SessionRow, action: SessionAction) => void;
   /** Offers the Topics that can fill an Open Place. A screen that does not pass it leaves the Open Place untappable. */
   onFillPlace?: (row: OpenPlaceRow) => void;
   onToggle: (row: OpenableRow) => void;
@@ -95,7 +101,16 @@ export function HostScreenRowView({
   }
   switch (row.kind) {
     case 'session':
-      return <SessionRowView row={row} palette={palette} attached={attached} onPress={() => actions.onOpenSession(row.name)} />;
+      return (
+        <SessionRowView
+          row={row}
+          palette={palette}
+          attached={attached}
+          busy={row.onHost !== undefined && (actions.isBusy?.(row.onHost.id) ?? false)}
+          onPress={() => actions.onOpenSession(row.name)}
+          onAction={actions.onSessionAction}
+        />
+      );
     case 'checking':
       return (
         <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
@@ -417,26 +432,31 @@ function SessionRowView({
   row,
   palette,
   attached,
+  busy,
   onPress,
+  onAction,
 }: {
   row: SessionRow;
   palette: Appearance;
   /** The phase of the Attach on this Session, or undefined when it is not. */
   attached?: AttachPhase;
+  /** A write to the Host for this Session runs. */
+  busy: boolean;
   onPress: () => void;
+  onAction?: (row: SessionRow, action: SessionAction) => void;
 }) {
   const windows = row.windowCount === undefined ? null : `${row.windowCount} ${row.windowCount === 1 ? 'Window' : 'Windows'}`;
   const about = [row.topicLabel, windows].filter((part) => part !== null).join(' · ');
-  return (
+  const line = (
     <Button
       onPress={onPress}
       modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
       <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-        <Image
+        {busy ? <ProgressView /> : <Image
           systemName="terminal"
           size={20}
           color={attached ? palette.controlAccent : palette.rowIcon}
-        />
+        />}
         <VStack spacing={2} alignment="leading">
           <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
           {attached ? (
@@ -451,5 +471,24 @@ function SessionRowView({
         <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
       </HStack>
     </Button>
+  );
+  const { onHost } = row;
+  if (onAction === undefined || onHost === undefined) return line;
+  return (
+    <ContextMenu>
+      <ContextMenu.Items>
+        {sessionActions(onHost).map((action) => (
+          <Button
+            key={action}
+            label={TMUX_MENU_LABEL[action]}
+            systemImage={TMUX_ORDER_ICON[action]}
+            role={action === 'stop-session' ? 'destructive' : undefined}
+            onPress={() => onAction(row, action)}
+            modifiers={[accessibilityLabel(TMUX_MENU_LABEL[action])]}
+          />
+        ))}
+      </ContextMenu.Items>
+      <ContextMenu.Trigger>{line}</ContextMenu.Trigger>
+    </ContextMenu>
   );
 }

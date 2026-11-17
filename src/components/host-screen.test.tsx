@@ -158,11 +158,15 @@ describe('the tabs', () => {
     expect(mockRemember.mock.calls).toEqual([['host', 'sessions'], ['host', 'sessions']]);
   });
 
-  it('shows every running Session on the Sessions tab that the user last chose', async () => {
+  it('shows every running Session on the Sessions tab that the user last chose, with its Actions', async () => {
     mockSettings = { hostScreenTabs: { host: 'sessions' } };
     await mount();
 
-    expect(labels()).toEqual(['Session api', 'Session api/fix-login']);
+    // Remove from Topic only for the Session in a Topic.
+    expect(labels()).toEqual([
+      'Rename Session…', 'Stop Session…', 'Session api',
+      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'Session api/fix-login',
+    ]);
   });
 });
 
@@ -185,7 +189,7 @@ describe('the bar at the bottom', () => {
     await mount();
 
     expect(searchBar(renderer)!.props.placeholder).toBe('Go to');
-    expect(menu()).toEqual(['Configure chooser', 'New Topic', 'New Session at a folder']);
+    expect(menu()).toEqual(['Mark All as Read', 'Configure chooser', 'New Topic', 'New Session at a folder']);
 
     toolbarMenuActions(renderer).get('New Topic')!.props.onPress();
     expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/new-topic', params: { hostId: 'host' } });

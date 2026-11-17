@@ -16,6 +16,8 @@ import type { HostCliState } from '@/topics/host-cli-install';
 
 const mockRouter = { push: jest.fn() };
 const mockSend = jest.fn();
+const mockTmuxSend = jest.fn();
+let mockSettings: Record<string, unknown> = {};
 const mockRelease = jest.fn();
 let mockFocused = true;
 let mockConnections: Record<string, unknown>;
@@ -62,9 +64,13 @@ jest.mock('@/topics/act-on-topic', () => ({
   ...jest.requireActual('@/topics/act-on-topic'),
   sendTopicOrder: (...args: unknown[]) => mockSend(...args),
 }));
+jest.mock('@/topics/tmux-order', () => ({
+  ...jest.requireActual('@/topics/tmux-order'),
+  sendTmuxOrder: (...args: unknown[]) => mockTmuxSend(...args),
+}));
 jest.mock('@/keyboard/key-commands', () => ({ useScreenKeyboardShortcuts: () => {} }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({
-  settings: {}, appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark, rememberHostScreenTab: jest.fn(),
+  settings: mockSettings, appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark, rememberHostScreenTab: jest.fn(),
 }) }));
 jest.mock('@/storage/device-store', () => ({
   deviceHostStore: () => ({
@@ -160,6 +166,8 @@ beforeEach(() => {
   hostCli = { kind: 'idle' };
   read = jest.fn(async () => [{ name: 'api', windowCount: 1 }]);
   mockSend.mockResolvedValue({ kind: 'changed' });
+  mockTmuxSend.mockResolvedValue({ kind: 'changed' });
+  mockSettings = {};
   mockConnections = {
     hold: jest.fn(async () => mockRelease),
     listing: () => feed.current(),
@@ -180,6 +188,8 @@ const labels = () => renderer.root.findAllByType(Button).flatMap((node) =>
   (node.props.modifiers ?? []).flatMap((modifier: { name: string; value: unknown }) => (modifier.name === 'accessibilityLabel' ? [modifier.value as string] : [])));
 const button = (label: string) => renderer.root.findAllByType(Button)
   .find((node) => node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label))!;
+const labelled = (label: string) => renderer.root.findAllByType(Button)
+  .filter((node) => node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label));
 const texts = () => renderer.root.findAllByType('Text' as never).map((node) => node.props.children);
 const topics = () => labels().filter((label) => label.startsWith('Topic '));
 
@@ -257,6 +267,51 @@ describe('a live Host Screen', () => {
     expect(topics()).toEqual(['Topic Docs']);
   });
 
+  it('offers the Session Actions on the Sessions tab and Mark All as Read in Options, sends each as a Host Write, and shows the pushed result', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSettings = { hostScreenTabs: { host: 'sessions' } };
+    const server = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    await mount();
+    const withScratch = (ship: string) => {
+      const item = snapshotItem('Ship');
+      return {
+        ...item,
+        no_topic: ['$9'],
+        sessions: [{ ...item.sessions[0]!, name: ship }, { ...item.sessions[0]!, id: '$9', name: 'scratch', topic: null }],
+      };
+    };
+    await server.push(withScratch('ship'));
+    // Remove from Topic only for the Session in a Topic.
+    expect(labels()).toEqual([
+      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'Session ship',
+      'Rename Session…', 'Stop Session…', 'Session scratch',
+    ]);
+
+    await act(async () => { button('Remove from Topic').props.onPress(); });
+    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'remove-from-topic', session: '$0' }, expect.any(Function));
+
+    await act(async () => { labelled('Rename Session…')[0]!.props.onPress(); });
+    expect(mockRouter.push).toHaveBeenLastCalledWith({ pathname: '/rename', params: { hostId: 'host', kind: 'session', id: '$0', name: 'ship' } });
+    await server.push(withScratch('web'));
+    expect(labels()).toContain('Session web');
+
+    mockTmuxSend.mockClear();
+    await act(async () => { labelled('Stop Session…')[1]!.props.onPress(); });
+    expect(mockTmuxSend).not.toHaveBeenCalled();
+    const [title, , buttons] = alert.mock.calls[0]!;
+    expect(title).toBe('Stop scratch?');
+    expect((buttons as AlertButton[]).map((choice) => choice.text)).toEqual(['Stop Session', 'Cancel']);
+    await act(async () => { (buttons as AlertButton[])[0]!.onPress!(); });
+    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'stop-session', session: '$9' }, expect.any(Function));
+    const stopped = withScratch('web');
+    await server.push({ ...stopped, no_topic: [], sessions: [stopped.sessions[0]] });
+    expect(labels()).not.toContain('Session scratch');
+
+    await act(async () => { toolbarMenuActions(renderer).get('Mark All as Read')!.props.onPress(); });
+    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'mark-all-read' }, expect.any(Function));
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('keeps the last Listing on screen, with no spinner, while a new Connection waits for its first push', async () => {
     const first = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
     await mount();
@@ -284,6 +339,7 @@ describe('Sessions only', () => {
     expect(texts()).toContain('Topics are unavailable on Dev Host: the Host Server did not answer');
     expect(labels()).toEqual(['Session api']);
     expect(labels().filter((label) => ['Pin', 'Unpin', 'Forget…'].includes(label))).toEqual([]);
+    expect(labels().filter((label) => label.endsWith('Session…') || label === 'Remove from Topic')).toEqual([]);
     expect(renderer.root.findAllByType(Picker)).toEqual([]);
     expect(searchBar(renderer)).toBeUndefined();
     expect([...toolbarMenuActions(renderer).keys()]).toEqual(['New Session', 'Configure chooser']);

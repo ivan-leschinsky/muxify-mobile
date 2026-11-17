@@ -4,7 +4,7 @@ import { HostServerError, type HostServer, type HostServerCall } from '@/ssh/hos
 import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';
 
-import type { TopicId } from './environment';
+import type { SessionId, TopicId } from './environment';
 import { REQUEST_MISMATCH_ERROR, WriteOutcomeUnknown, type RequestId, type UnknownOutcome } from './request';
 
 /** The version of MuxifyCore's `EnvironmentRequest` that the phone sends. */
@@ -13,11 +13,18 @@ const ENVIRONMENT_VERSION = 2;
 /** One case of MuxifyCore's `EnvironmentCommand`, as JSON: `{ "<case>": { … } }`. */
 export type EnvironmentCommand = Readonly<Record<string, unknown>>;
 
-/** One Host Write as the Host Server takes it: the command, the open Topic it acts on, and its Request id. */
+/** A tmux Session or Window that a write acts on, by tmux's own id: `$3` or `@5`. */
+export type TmuxTarget = { session: SessionId } | { window: string };
+
+/** One Host Write as the Host Server takes it: the command, what it acts on, and its Request id. */
 export interface EnvironmentWrite {
   command: EnvironmentCommand;
-  /** The open Topic the command acts on. A command that takes no target, such as `create`, has none. */
+  /**
+   * The open Topic the command acts on, or the Session or Window. A command
+   * that takes no target, such as `create`, has neither.
+   */
   topic?: TopicId;
+  tmux?: TmuxTarget;
   request: RequestId;
 }
 
@@ -36,6 +43,7 @@ export function environmentRequest(write: EnvironmentWrite): object {
       version: ENVIRONMENT_VERSION,
       command: write.command,
       ...(write.topic === undefined ? {} : { target: { topic: { id: write.topic } } }),
+      ...(write.tmux === undefined ? {} : { target: write.tmux }),
       request: write.request,
     },
   };

@@ -3,6 +3,7 @@ import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, Topic
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
+import type { SessionOnHost } from '@/topics/tmux-order';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**
@@ -46,6 +47,8 @@ export interface SessionRow {
   windowCount: number | undefined;
   /** The Topic it is in, or "No Topic". Null where the row says nothing about Topics. */
   topicLabel: string | null;
+  /** What the Host Server says of it, for its Actions. Undefined where the row offers none, as in Sessions only. */
+  onHost?: SessionOnHost;
 }
 
 /** One row of a Host Screen section. A section with no Session rows has one of the others. */
@@ -362,6 +365,7 @@ function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
     name: session.name,
     windowCount: session.windowCount,
     topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
+    ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
   })) ?? [unansweredRow(listing)];
   const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
   return {
@@ -377,6 +381,8 @@ export interface RunningSession {
   windowCount: number | undefined;
   /** The label of its Topic, or null for a Session in no Topic. Undefined when the Host has not said. */
   topicLabel: string | null | undefined;
+  /** Its id and whether it is in a Topic, from the Host Server's snapshot. Undefined when the Host has not said. */
+  onHost?: SessionOnHost;
 }
 
 /** The Host's Sessions in the order the Host lists them, or undefined while the Host has no answer. */
@@ -393,6 +399,7 @@ export function runningSessions(listing: Listing, topics: HostTopics): RunningSe
       name: live.name,
       windowCount: live.windowCount ?? known?.windows?.length,
       topicLabel: known === undefined ? undefined : known.topic === null ? null : labels.get(known.topic),
+      ...(known === undefined ? {} : { onHost: { id: known.id, inTopic: known.topic !== null } }),
     };
   });
 }
