@@ -49,6 +49,14 @@ describe('finding muxify on a Host', () => {
     expect(host.ran).toHaveLength(3);
   });
 
+  it('asks for the app bundle only on a Mac, as the install does', async () => {
+    const host = fakeHost([]);
+
+    await createMuxifyPath().locate(host.exec);
+
+    expect(host.ran[2]).toMatch(/^uname -s \| grep -qx Darwin && test -x /);
+  });
+
   it('does not take a shell alias for a path', async () => {
     const host = fakeHost([['command -v', { exitCode: 0, stdout: "alias muxify='x'\n" }]]);
 

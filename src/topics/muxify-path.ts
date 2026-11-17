@@ -17,9 +17,12 @@ const PROBE_STEPS = [
     step: '~/.local/bin',
     command: 'test -x ~/.local/bin/muxify && echo ~/.local/bin/muxify',
   },
+  // Only on a Mac: a Linux Host can see the Mac's own app through a shared
+  // folder (OrbStack mounts /Applications), and that one is not this Host's.
+  // The install script skips it there too.
   {
     step: 'app bundle',
-    command: `test -x ${shellQuote(APP_BUNDLE_CLI)} && echo ${shellQuote(APP_BUNDLE_CLI)}`,
+    command: `uname -s | grep -qx Darwin && test -x ${shellQuote(APP_BUNDLE_CLI)} && echo ${shellQuote(APP_BUNDLE_CLI)}`,
   },
 ] as const;
 
