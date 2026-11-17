@@ -24,11 +24,10 @@ const REOPEN: TopicOrder = { kind: 'wake', wake: 'reopen' };
 let renderer: ReactTestRenderer;
 let card: ReturnType<typeof useTopicCardWrites>;
 const order: string[] = [];
-const readAgain = jest.fn(async () => { order.push('read'); });
 
 async function mount(send: typeof sendTopicOrder) {
   function Screen() {
-    card = useTopicCardWrites('host', readAgain, send);
+    card = useTopicCardWrites('host', send);
     return null;
   }
   await act(async () => { renderer = create(<Screen />); });
@@ -54,20 +53,20 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
 describe('a write from a Topic card', () => {
-  it('writes to the Host and then reads the Listing again', async () => {
+  it('writes to the Host, and reads nothing after: the Host Server pushes the change', async () => {
     const send = host({ kind: 'changed' });
     await mount(send);
     await act(async () => { await card.order(TOPIC, MOVE_UP); });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ id: 'host' }), TOPIC, MOVE_UP, expect.any(Function));
-    expect(order).toEqual(['write', 'read']);
+    expect(order).toEqual(['write']);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
 
-  it("shows the Host's reason on a refusal, and still reads the Listing again", async () => {
+  it("shows the Host's reason on a refusal, and reads nothing after", async () => {
     await mount(host({ kind: 'failed', error: 'The card is at the top.' }));
     await act(async () => { await card.order(TOPIC, MOVE_UP); });
     expect(Alert.alert).toHaveBeenCalledWith('Could not Move Up', 'The card is at the top.');
-    expect(order).toEqual(['write', 'read']);
+    expect(order).toEqual(['write']);
   });
 
   it('marks the card while it runs, and ignores a second order for it', async () => {
@@ -86,21 +85,21 @@ describe('a write from a Topic card', () => {
     expect(card.writing(TOPIC)).toBe(false);
   });
 
-  it('says a wake the Host did not answer may have happened, reads again, and takes the next order', async () => {
+  it('says a wake the Host did not answer may have happened, reads nothing, and takes the next order', async () => {
     const send = host(new ExecDeadlineError(), { kind: 'changed' });
     await mount(send);
     await act(async () => { await card.order(TOPIC, REOPEN); });
     expect(Alert.alert).toHaveBeenCalledWith('Reopen may have happened', expect.stringContaining('The Host did not answer in time.'));
-    expect(order).toEqual(['write', 'read']);
+    expect(order).toEqual(['write']);
     await act(async () => { await card.order(TOPIC, REOPEN); });
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it('says a move may have happened when the Host has the Request in doubt, and reads again', async () => {
+  it('says a move may have happened when the Host has the Request in doubt, and reads nothing', async () => {
     await mount(host({ kind: 'unknown', message: 'The Request changed the records and did not finish.' }));
     await act(async () => { await card.order(TOPIC, MOVE_UP); });
     expect(Alert.alert).toHaveBeenCalledWith('Move Up may have happened', expect.stringContaining('The Request changed the records and did not finish.'));
-    expect(order).toEqual(['write', 'read']);
+    expect(order).toEqual(['write']);
   });
 
   it('says an order may have happened when the second send of its Request got no answer either', async () => {

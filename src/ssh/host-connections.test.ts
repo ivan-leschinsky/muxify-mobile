@@ -250,6 +250,36 @@ describe('the app’s Connections', () => {
     expect(links[0]?.disconnected).toBe(true);
   });
 
+  it('keeps a Connection open past the minute while a screen holds it, and starts the minute when it lets go', async () => {
+    const { clock, links, connections } = setup();
+
+    const release = await connections.hold(HOST);
+    clock.advance(IDLE_MS * 3);
+    await settle();
+    expect(links).toHaveLength(1);
+    expect(links[0]?.disconnected).toBe(false);
+
+    release();
+    release();
+    clock.advance(IDLE_MS - 1);
+    await settle();
+    expect(links[0]?.disconnected).toBe(false);
+    clock.advance(1);
+    await settle();
+    expect(links[0]?.disconnected).toBe(true);
+  });
+
+  it('closes, on return from the background, a Connection that only a screen holds', async () => {
+    const { links, connections } = setup();
+    await connections.hold(HOST);
+
+    connections.lifecycleChanged('background');
+    connections.lifecycleChanged('active');
+    await settle();
+
+    expect(links[0]?.disconnected).toBe(true);
+  });
+
   it('reads once more on a new Connection when an exec passes its deadline', async () => {
     const { clock, links, connections } = setup();
     await connections.read(HOST, ls);
@@ -686,6 +716,29 @@ describe('the Host Server', () => {
     expect(logged).toContain(
       "connections: Mac: Host Server: Sessions only: the Host's muxify is too old (muxify 1a2b3c4 1763100000)",
     );
+  });
+
+  it('gives the Listing of the Host’s latest Connection, and says when it changes', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+    const heard: string[] = [];
+    connections.subscribeListing((hostId) => heard.push(hostId));
+    expect(connections.listing(HOST.id)).toBeNull();
+
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+    expect(connections.listing(HOST.id)).toEqual({
+      server: { kind: 'live', build: 'muxify 7593671 1794697369', protocol: 1 },
+      snapshot: null,
+    });
+    expect(heard).toContain(HOST.id);
+
+    links[0]!.drop();
+    expect(connections.listing(HOST.id)?.server).toEqual({ kind: 'closed' });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+    expect(connections.listing(HOST.id)?.server.kind).toBe('live');
   });
 
   it('closes with its Connection, and a new Connection starts a new one', async () => {

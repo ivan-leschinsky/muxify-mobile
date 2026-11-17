@@ -59,7 +59,7 @@ import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from '@/do
 import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
-import { useHostReading } from '@/hooks/use-host-reading';
+import { useHostListing } from '@/hooks/use-host-listing';
 import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
@@ -71,7 +71,6 @@ import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/reco
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import type { TopicId } from '@/topics/environment';
 import { lastSnapshot } from '@/topics/host-topics';
-import { SESSION_PATHS_CAPABILITY } from '@/topics/request';
 import {
   SWIPE_LABEL,
   swipeAction,
@@ -99,7 +98,7 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const { listing, topics, read: readHost } = useHostReading(id, true);
+  const { listing, topics, sessionsOnly, retry: retryHost } = useHostListing(id);
   /** The Topic card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<TopicId | null>(null);
   /** The Open Place the user fills: tapped, until a Topic is picked or the sheet is closed. */
@@ -128,18 +127,16 @@ export default function HostScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void (async () => {
-        await readRecords();
-        await readHost();
-      })();
-    }, [readRecords, readHost]),
+      void readRecords();
+    }, [readRecords]),
   );
 
   const tabs = hostScreenTabs(topics);
   const tab = tabOnShow(settings.hostScreenTabs?.[id], tabs);
   const switchTab = () => rememberHostScreenTab(id, tabs[(tabs.indexOf(tab) + 1) % tabs.length]!);
-  // Without Go to, New Session and New Topic are in the Options menu.
-  const hasGoTo = lastSnapshot(topics)?.capabilities.includes(SESSION_PATHS_CAPABILITY) ?? false;
+  // A Host Server serves Go to. Without it, New Session is in the Options
+  // menu, and in Sessions only there is no New Topic.
+  const hasGoTo = !sessionsOnly && lastSnapshot(topics) !== null;
 
   // Null while the Go to field does not have the keys.
   const [goTo, setGoTo] = useState<GoToMode | null>(null);
@@ -211,13 +208,13 @@ export default function HostScreen() {
   };
   // A move opens the Bench: a card cannot go where the list hides it.
   const movingSections = moving === null ? [] : hostScreen({ ...input, opened: new Set([...opened, 'bench']) });
-  // A Listing read during the move can drop the picked card, and the move ends with it.
+  // A Listing pushed during the move can drop the picked card, and the move ends with it.
   const picked = movingSections
     .flatMap((section) => section.rows)
     .find((row): row is TopicRow => row.kind === 'topic' && row.id === moving);
   const targets = picked === undefined ? null : moveTargets(movingSections, picked.id);
   const sections = targets === null ? hostScreen({ ...input, opened }) : movingSections;
-  // The Benched Topics are choices even while the Bench row is closed. A Listing read while the sheet is open can fill the place, and the sheet closes with it.
+  // The Benched Topics are choices even while the Bench row is closed. A Listing pushed while the sheet is open can fill the place, and the sheet closes with it.
   const choices = filling === null ? null : fillChoices(hostScreen({ ...input, opened: new Set([...opened, 'bench']) }), filling);
   // The bar mounts again each time this screen comes back. The Go to field
   // that expo-router puts back in the toolbar after a push and a pop no longer
@@ -242,14 +239,11 @@ export default function HostScreen() {
 
   const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
-  const cardWrites = useTopicCardWrites(id, readHost);
+  const cardWrites = useTopicCardWrites(id);
   const actFromMenu = (topic: TopicId, action: TopicAction) => cardWrites.order(topic, { kind: 'action', action });
   const dropOnHost = (topic: TopicId, drop: Drop) => cardWrites.order(topic, { kind: 'drop', drop });
-  const startMove = (row: TopicRow) => {
-    setMoving(row.id);
-    // The targets come from the newest Listing, not from the one the menu was opened on.
-    void readHost();
-  };
+  // The targets come from the newest Listing the Host Server pushed.
+  const startMove = (row: TopicRow) => setMoving(row.id);
   const sendMove = (topic: TopicId, target: MoveTarget) => {
     setMoving(null);
     void (target.kind === 'drop' ? dropOnHost(topic, target.drop) : actFromMenu(topic, target.action));
@@ -280,13 +274,10 @@ export default function HostScreen() {
     onTopicAction: (row, action) => void actFromMenu(row.id, action),
     onMove: startMove,
     onSettle: askSettle,
-    onFillPlace: (row) => {
-      setFilling(row.id);
-      // The choices and the place's number come from the newest Listing, not from the one on screen.
-      void readHost();
-    },
+    // The choices and the place's number come from the newest Listing the Host Server pushed.
+    onFillPlace: (row) => setFilling(row.id),
     onToggle: toggleOpened,
-    onRetry: () => void readHost(),
+    onRetry: retryHost,
   };
 
   // While a card moves, a tap does not leave the screen, and no row has a menu or a swipe.
@@ -448,7 +439,7 @@ export default function HostScreen() {
             onPress={() => router.push({ pathname: '/session-form', params: { hostId: id } })}>
             New Session
           </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction hidden={hasGoTo} icon="folder.badge.plus" onPress={newTopic}>
+          <Stack.Toolbar.MenuAction hidden={hasGoTo || sessionsOnly} icon="folder.badge.plus" onPress={newTopic}>
             New Topic
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/chooser-lists', params: { hostId: id } })}>

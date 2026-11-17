@@ -1,0 +1,12 @@
+context platform=ios kind=simulator
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Host Dev Host\""
+wait "label=\"Host Options\"" 15000
+wait "label=\"Topic e2e Already There\"" 15000
+
+wait "label=\"Topic e2e Made on the Host\"" 30000
+is "visible" "label=\"Host Options\""
+
+close

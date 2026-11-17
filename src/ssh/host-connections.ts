@@ -1,6 +1,7 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
+import { followListing, type ListingFeed, type LiveListing } from '@/ssh/host-listing-feed';
 import { createHostServer, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
@@ -80,6 +81,23 @@ export interface HostConnections {
   subscribeHostCli(listener: (hostId: string, state: HostCliState) => void): () => void;
   /** The Host Server of the Host's open Connection, or null when none runs. */
   hostServer(hostId: string): HostServer | null;
+  /**
+   * What the Host Server of the Host's latest Connection says: where it
+   * stands, and the latest Listing it pushed. It stays after its Connection
+   * closes, with the server `closed`, until a new Connection starts one. Null
+   * before the Host has had a Host Server.
+   */
+  listing(hostId: string): LiveListing | null;
+  /** Hears every change of a Host's `listing`. Answers the way to stop hearing. */
+  subscribeListing(listener: (hostId: string) => void): () => void;
+  /**
+   * A screen that shows the Host holds its Connection, opening one when none
+   * is open, until it calls what this answers. The Connection does not close
+   * for idle while it is held, and its idle minute starts when it is let go.
+   * Unlike an Attach, a hold does not keep the Connection over a return from
+   * the background.
+   */
+  hold(host: Host, options?: ScreenOptions): Promise<() => void>;
 }
 
 /** An exec that passed its deadline. Its Connection is suspect. */
@@ -100,7 +118,7 @@ interface Entry {
   server: HostServer | null;
   /** Attaches that hold it. */
   attaches: number;
-  /** Screen reads and writes in flight on it. */
+  /** Screen reads and writes in flight on it, and the screens that hold it. */
   uses: number;
   idle: Timer | null;
   /** What the Attaches on it run when a screen exec passes its deadline. */
@@ -134,6 +152,9 @@ export function createHostConnections(options: {
   /** Each Host's latest install, and the Connection it runs on. */
   const installs = new Map<string, { entry: Entry; state: HostCliState }>();
   const hostCliListeners = new Set<(hostId: string, state: HostCliState) => void>();
+  /** Each Host's latest Listing feed, and the Connection whose Host Server it follows. */
+  const feeds = new Map<string, { entry: Entry; feed: ListingFeed }>();
+  const listingListeners = new Set<(hostId: string) => void>();
   /** One value, so a reader that compares snapshots sees no change. */
   const NOT_STARTED: HostCliState = { kind: 'idle' };
   let backgrounded = false;
@@ -213,6 +234,15 @@ export function createHostConnections(options: {
       clock,
       say: (line) => say(`${host.displayName}: Host Server: ${line}`),
     });
+    const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`));
+    const changed = () => {
+      // A Connection that a newer one replaced has nothing to say.
+      if (feeds.get(host.id)?.feed !== feed) return;
+      for (const listener of [...listingListeners]) listener(host.id);
+    };
+    feeds.set(host.id, { entry, feed });
+    feed.onChange(changed);
+    changed();
   }
 
   /**
@@ -418,6 +448,30 @@ export function createHostConnections(options: {
     hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
 
     hostServer: (hostId) => entries.get(hostId)?.server ?? null,
+
+    listing: (hostId) => feeds.get(hostId)?.feed.current() ?? null,
+
+    subscribeListing(listener) {
+      listingListeners.add(listener);
+      return () => {
+        listingListeners.delete(listener);
+      };
+    },
+
+    async hold(host, options) {
+      const { entry, dialed } = await acquire(host);
+      checkHostKey(entry, dialed, options);
+      begin(entry, dialed);
+      entry.uses += 1;
+      busy(entry);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        entry.uses -= 1;
+        settle(entry);
+      };
+    },
 
     subscribeHostCli(listener) {
       hostCliListeners.add(listener);

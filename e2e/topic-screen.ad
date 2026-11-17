@@ -12,6 +12,8 @@ wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "muxify-e2e-topic-screen/e2e-topic-screen-live"
 wait "id=\"topic-title\"" 15000
 is "text" "id=\"topic-title\"" "e2e Topic Screen live"
+# The Header takes a press once the push onto the Topic Screen has ended.
+wait 1500
 press "id=\"header-title\""
 wait "label=\"Close Choose\"" 8000
 wait "label=\"Note Seeded by e2e\"" 15000

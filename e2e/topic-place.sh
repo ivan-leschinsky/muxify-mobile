@@ -68,6 +68,8 @@ PY
 }
 
 open_title_sheet() {
+  # A press within about a second of a push or a pop can be lost.
+  sleep 1.5
   agent-device press "id=\"$1\"" >/dev/null 2>&1
   agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened from $1"
   # A press on a sheet that still moves lands nowhere.

@@ -9,6 +9,8 @@ wait 1500
 wait "label=\"Topic e2e Edited it's\"" 15000
 press "label=\"Topic e2e Edited it's\""
 wait "id=\"pane-command\"" 20000
+# The Header takes a press once the push onto the Topic Screen has ended.
+wait 1500
 press "label=\"Options\""
 wait "label=\"Topic\" role=button" 8000
 press "label=\"Topic\" role=button"
@@ -19,6 +21,7 @@ fill "label=\"Topic Note\" editable=true" ""
 press "label=\"Tag #personal\""
 press "label=\"Save\""
 wait "id=\"pane-command\"" 15000
+wait 1500
 press "id=\"header-title\""
 wait "label=\"Close Choose\"" 8000
 wait "text=\"#work\"" 15000

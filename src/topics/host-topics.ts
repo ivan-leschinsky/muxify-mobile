@@ -1,4 +1,5 @@
-import type { ListedSession } from '@/domain/host-listing';
+import { answered, refused, type Listing, type ListedSession } from '@/domain/host-listing';
+import type { LiveListing } from '@/ssh/host-listing-feed';
 
 import type { EnvironmentSnapshot } from './environment';
 import type { HostCliState } from './host-cli-install';
@@ -33,7 +34,12 @@ export type HostTopics =
   /** An old Host CLI, and the install is updating it. */
   | { kind: 'updating'; last: EnvironmentSnapshot | null }
   | { kind: 'failed'; error: string; last: EnvironmentSnapshot | null }
-  | { kind: 'listed'; snapshot: EnvironmentSnapshot };
+  | { kind: 'listed'; snapshot: EnvironmentSnapshot }
+  /**
+   * No Host Server can run on this Connection: the Host Screen shows Sessions
+   * only and says "Topics are unavailable on <host>: <reason>".
+   */
+  | { kind: 'unavailable'; host: string; reason: string };
 
 /** Before the Host has been asked anything. */
 export const TOPICS_UNASKED: HostTopics = { kind: 'loading', last: null };
@@ -79,6 +85,9 @@ export function withHostCli(topics: HostTopics, hostCli: HostCliState): HostTopi
     case 'old':
       if (hostCli.kind === 'running') return { kind: 'updating', last: topics.last };
       return failure === null ? topics : { ...topics, failure };
+    case 'unavailable':
+      // A Host CLI too old for a Host Server, which the install is updating.
+      return hostCli.kind === 'running' ? { kind: 'updating', last: null } : topics;
     default:
       return topics;
   }
@@ -96,6 +105,7 @@ export function lastSnapshot(topics: HostTopics): EnvironmentSnapshot | null {
       return topics.last;
     case 'absent':
     case 'installing':
+    case 'unavailable':
       return null;
   }
 }
@@ -106,4 +116,35 @@ export function lastSnapshot(topics: HostTopics): EnvironmentSnapshot | null {
  */
 export function listedSessions(snapshot: EnvironmentSnapshot): ListedSession[] {
   return snapshot.sessions.map(({ name }) => ({ name, windowCount: undefined }));
+}
+
+/**
+ * What the Host Screen draws of a Host whose Host Server pushes its Listing:
+ *
+ * - the latest push of this Connection, at once;
+ * - before it, `last`, the Listing the screen last drew, so a new
+ *   Connection shows no spinner over it; with none, the spinner;
+ * - in Sessions only, and while the Host has no `muxify` yet, the Sessions
+ *   that tmux lists, `sessions`, and the reason there are no Topics;
+ * - `failure`, the Connection that could not be held, as a refusal.
+ */
+export function liveReading(input: {
+  live: LiveListing | null;
+  last: EnvironmentSnapshot | null;
+  sessions: Listing;
+  failure: string | null;
+  host: string;
+}): { listing: Listing; topics: HostTopics } {
+  const { live, last, sessions, failure, host } = input;
+  if (failure !== null) return { listing: refused(failure), topics: { kind: 'failed', error: failure, last } };
+  if (live?.server.kind === 'sessions-only') {
+    return { listing: sessions, topics: { kind: 'unavailable', host, reason: live.server.reason } };
+  }
+  if (live?.server.kind === 'installing') return { listing: sessions, topics: { kind: 'absent' } };
+  const snapshot = live?.snapshot ?? null;
+  if (snapshot !== null) return { listing: answered(listedSessions(snapshot)), topics: { kind: 'listed', snapshot } };
+  return {
+    listing: last === null ? { phase: 'reading' } : { phase: 'reading', sessions: listedSessions(last) },
+    topics: { kind: 'loading', last },
+  };
 }

@@ -195,7 +195,7 @@ function topicsList(topics: HostTopics, context: CardsContext): HostScreenSectio
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
 }
 
-/** The row that says why the Topics are not as the Host has them now: an install, an old Host CLI or a failed read. */
+/** The row that says why the Topics are not as the Host has them now: an install, an old Host CLI, a failed read, or no Host Server. */
 function topicsNotice(topics: HostTopics): HostScreenRow[] {
   switch (topics.kind) {
     case 'installing':
@@ -211,6 +211,8 @@ function topicsNotice(topics: HostTopics): HostScreenRow[] {
       return [{ kind: 'checking', text: 'Updating Muxify on this Host…' }];
     case 'failed':
       return [{ kind: 'refused', message: topics.error }];
+    case 'unavailable':
+      return [{ kind: 'note', text: `Topics are unavailable on ${topics.host}: ${topics.reason}` }];
     case 'absent':
     case 'loading':
     case 'listed':

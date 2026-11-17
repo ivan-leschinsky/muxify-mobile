@@ -21,7 +21,7 @@ const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
-let mockReading: { listing: unknown; topics: HostTopics; read: jest.Mock };
+let mockReading: { listing: unknown; topics: HostTopics; sessionsOnly: boolean; retry: jest.Mock };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -59,7 +59,7 @@ jest.mock('@/components/tappable-row', () => ({ TAPPABLE_ROW: {} }));
 jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: () => null }));
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
-jest.mock('@/hooks/use-host-reading', () => ({ useHostReading: () => mockReading }));
+jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
   openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: jest.fn(), busyTopic: null,
 }) }));
@@ -106,11 +106,12 @@ const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
 const path = (name: string) => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
-async function mount(capabilities = ['request', 'session-paths']) {
+async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot([]) }) {
   mockReading = {
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
-    topics: { kind: 'listed', snapshot: snapshot(capabilities) },
-    read: jest.fn(async () => {}),
+    topics,
+    sessionsOnly: topics.kind === 'unavailable',
+    retry: jest.fn(),
   };
   await act(async () => { renderer = create(<HostScreen />); });
   const field = searchBar(renderer);
@@ -158,16 +159,17 @@ describe('the tabs', () => {
   });
 });
 
-describe('on a Host CLI with no Go to', () => {
-  it('has no bar, and keeps New Session and New Topic in Options with the sheets of today', async () => {
-    await mount(['request']);
+describe('in Sessions only', () => {
+  it('has no bar and no New Topic, and keeps New Session in Options with the Session form', async () => {
+    await mount({ kind: 'unavailable', host: 'Dev Host', reason: 'the Host Server did not answer' });
 
     expect(searchBar(renderer)).toBeUndefined();
-    expect(menu()).toEqual(['New Session', 'New Topic', 'Configure chooser']);
+    expect(menu()).toEqual(['New Session', 'Configure chooser']);
     expect(mockKeys['go-to']).toBeUndefined();
+    expect(mockKeys['new-topic']).toBeUndefined();
 
-    toolbarMenuActions(renderer).get('New Topic')!.props.onPress();
-    expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/topic-form', params: { hostId: 'host' } });
+    toolbarMenuActions(renderer).get('New Session')!.props.onPress();
+    expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/session-form', params: { hostId: 'host' } });
   });
 });
 

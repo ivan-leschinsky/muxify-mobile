@@ -31,10 +31,17 @@ ends when the transport is lost, when its keepalive goes unanswered for about
 _Avoid_: SSH session, link, socket
 
 **Host CLI**:
-The `muxify` on a Host, which the phone uses to read and change its Topics. The
-phone, and desktop Muxify when it connects, install and update it in
-`~/.local/bin`; on a Mac with Muxify.app it is the app's own.
+The `muxify` on a Host, which keeps that Host's Topics. The phone and desktop
+Muxify read and change them through its Host Server. Both install and update it
+in `~/.local/bin`; on a Mac with Muxify.app it is the app's own.
 _Avoid_: desktop CLI, desktop Muxify (when you mean the `muxify` command), remote helper
+
+**Host Server**:
+The Host CLI serving the phone over one channel of a Host's Connection, for as
+long as the Connection lives. Through it the Host Screen and the Topic Screen
+show the Host's changes as they happen. When it cannot run, the Host Screen
+shows only Sessions and says why Topics are unavailable.
+_Avoid_: daemon, remote server, helper
 
 **Fingerprint**:
 The host key hash recorded the first time a Host is reached, compared on every
@@ -212,11 +219,12 @@ Cold reconnect and direct Terminal entry construct the same parent screens.
 Adding, editing, deleting, and ordering Hosts is in Settings.
 
 **Listing**:
-What a Host last said its Sessions were. The Host Screen asks again every time they come back into focus — a sheet closing over it, a return from the Terminal
-Screen — and the asking is invisible: the answer it is holding stays on screen
-until a better one arrives. Only the first question has nothing to show and a
-spinner to stand in for it. A refusal is the exception and drops the list,
-because a Host that cannot be reached has no Sessions to offer.
+What a Host last said its Topics and Sessions were. The Host Server pushes a new
+Listing whenever it changes on the Host, and the Host Screen draws it at once:
+the answer it holds stays on screen until the next one arrives. Only the first
+Listing of a Connection has nothing to show and a spinner to stand in for it. A
+refusal is the exception and drops the list, because a Host that cannot be
+reached has no Sessions to offer.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Write**:

@@ -77,6 +77,7 @@
     "e2e:host-server": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/host-server.test.ts",
     "e2e:tmux-keys": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/tmux-keys.test.ts",
     "e2e:topic-screen": "bash e2e/topic-screen.sh",
+    "e2e:live-host-screen": "bash e2e/live-host-screen.sh",
     "e2e:new-topic": "bash e2e/new-topic.sh",
     "e2e:edit-topic": "bash e2e/edit-topic.sh",
     "e2e:add-session": "bash e2e/add-session.sh",
