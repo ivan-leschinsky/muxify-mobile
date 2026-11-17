@@ -6,33 +6,29 @@ import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 
 import type { TopicId } from './environment';
+import { pushedTopic } from './host-writes';
 import type { TopicRead } from './topic-detail';
 
 const say = speakingAs(deviceLog(), 'topic');
 
 /**
- * One read of a Topic from its Host, on the Host's Connection.
+ * One read of a Topic from its Host: the first push of a `topic` subscription
+ * on the Host Server of the Host's Connection.
  *
- * The Topic entry path asks this. It
- * never throws: a Host that is no longer saved, a Host that refuses and a
- * Topic the Host cannot show are each a failed read that carries its reason.
+ * The Topic entry path asks this. It never throws: a Host that is no longer
+ * saved, a Host that refuses, a Host in Sessions only and a Topic the Host
+ * cannot show are each a failed read that carries its reason.
  */
 export async function readTopic(hostId: string, topicId: TopicId): Promise<TopicRead> {
   const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
   if (!host) return { kind: 'failed', error: 'This Host is no longer saved.' };
   try {
-    const read = await appConnections().read(host, (transport, muxify) =>
-      muxify.show((command) => transport.exec(command), topicId),
-    );
-    say(
-      read.kind === 'shown'
-        ? `${host.displayName} showed a Topic`
-        : `${host.displayName} could not show a Topic: ${read.error}`,
-    );
-    return read;
+    const topic = await pushedTopic(host, topicId);
+    say(`${host.displayName} showed a Topic`);
+    return { kind: 'shown', topic };
   } catch (error) {
     const message = describeConnectionFailure(error);
-    say(`${host.displayName} refused the Topic: ${message}`);
+    say(`${host.displayName} could not show a Topic: ${message}`);
     return { kind: 'failed', error: message };
   }
 }

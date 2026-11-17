@@ -32,7 +32,6 @@ import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
 import { useOpenSession } from '@/tmux/attach-context';
-import { appConnections } from '@/tmux/ssh-connection';
 import { folderSessionName } from '@/topics/add-session';
 import type { Tag, TopicId } from '@/topics/environment';
 import { addSession, createTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
@@ -80,9 +79,8 @@ export default function NewTopicScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to create Topics.');
-      if (!left) setTagsRead({ attempt: tagsAttempt, tags: result.snapshot.tags });
+      const { tags: listed } = await pushedListing(host);
+      if (!left) setTagsRead({ attempt: tagsAttempt, tags: listed });
     })().catch((error) => { if (!left) setTagsRead({ attempt: tagsAttempt, tags: null, error: describeConnectionFailure(error) }); });
     return () => { left = true; };
   }, [hostId, tagsAttempt]);

@@ -32,7 +32,6 @@ import { useHostWrite } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
 import { createTopic, pushedListing } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
@@ -56,9 +55,8 @@ export default function TopicFormScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to create Topics.');
-      if (!left) setTags(result.snapshot.tags);
+      const { tags: listed } = await pushedListing(host);
+      if (!left) setTags(listed);
     })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
     return () => { left = true; };
   }, [hostId, attempt]);

@@ -14,7 +14,7 @@
  *
  * Every command runs against a Muxify of its own: its Topic records, its Config
  * and its tmux server live in a temp folder, which is removed afterwards, the
- * way e2e/topics.test.ts and e2e/sandbox.sh do it.
+ * way e2e/sandbox.sh does it.
  */
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs';

@@ -34,20 +34,11 @@ const say = speakingAs(deviceLog(), 'host');
  * Sessions again.
  */
 export function useHostListing(hostId: string) {
-  const connections = appConnections();
-  const live = useLiveListing(hostId);
-  const hostCli = useSyncExternalStore(
-    useCallback((changed: () => void) => connections.subscribeHostCli(changed), [connections]),
-    () => connections.hostCli(hostId),
-  );
   const [failure, setFailure] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Listing>(UNASKED);
   const [hostName, setHostName] = useState('this Host');
   const [attempt, setAttempt] = useState(0);
-  /** The latest push, which stays on screen until the next Connection's first push. */
-  const [last, setLast] = useState<EnvironmentSnapshot | null>(null);
-  const pushed = live?.snapshot ?? null;
-  if (pushed !== null && pushed !== last) setLast(pushed);
+  const { live, listing, topics } = useLiveReading(hostId, { sessions, failure, host: hostName });
 
   const focused = useIsFocused();
   const closed = live?.server.kind === 'closed';
@@ -112,16 +103,37 @@ export function useHostListing(hostId: string) {
     };
   }, [focused, hostId, fallback, attempt]);
 
-  const reading = liveReading({ live, last, sessions, failure, host: hostName });
-
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
   return {
-    listing: reading.listing,
-    topics: withHostCli(reading.topics, hostCli),
+    listing,
+    topics,
     /** No Host Server runs: Topic Actions, Go to and New Topic are hidden. */
     sessionsOnly: live?.server.kind === 'sessions-only',
     retry,
   };
+}
+
+/**
+ * The Listing and Topics that the Host Server of the Host's Connection pushes,
+ * as `liveReading` draws them with what the screen read itself: `sessions`
+ * from tmux, for Sessions only and while the Host CLI install puts a first
+ * `muxify` on the Host, and `failure`, a Connection that could not be had.
+ * The latest push stays until the next Connection's first push. The Topics
+ * say where the Host CLI install stands.
+ */
+export function useLiveReading(hostId: string, read: { sessions: Listing; failure: string | null; host: string }) {
+  const connections = appConnections();
+  const live = useLiveListing(hostId);
+  const hostCli = useSyncExternalStore(
+    useCallback((changed: () => void) => connections.subscribeHostCli(changed), [connections]),
+    () => connections.hostCli(hostId),
+  );
+  /** The latest push, which stays on screen until the next Connection's first push. */
+  const [last, setLast] = useState<EnvironmentSnapshot | null>(null);
+  const pushed = live?.snapshot ?? null;
+  if (pushed !== null && pushed !== last) setLast(pushed);
+  const reading = liveReading({ live, last, ...read });
+  return { live, listing: reading.listing, topics: withHostCli(reading.topics, hostCli) };
 }
 
 /**

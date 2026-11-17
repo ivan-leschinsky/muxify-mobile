@@ -89,8 +89,7 @@ const sid = (id: string) => id as SessionId;
 const tid = (id: string) => id as TopicId;
 const topicCard = (id: string, label: string) =>
   ({ kind: 'topic' as const, mark: null, sessions: [], topic: { id: tid(id), label, note: null, tags: [], state: 'live' as const } });
-const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
-  capabilities,
+const snapshot = (): EnvironmentSnapshot => ({
   sidebar: null,
   tags: [],
   sessions: [
@@ -104,7 +103,7 @@ const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
 const path = (name: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
-async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot([]) }) {
+async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot() }) {
   mockReading = {
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
     topics,

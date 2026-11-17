@@ -6,7 +6,6 @@ import { fakeHostServer, inDoubt, lost, refused, snapshotPush } from '@/test-sup
 import { toolbarButton } from '@/test-support/toolbar';
 
 const mockLoad = jest.fn();
-const mockRead = jest.fn();
 const mockCreate = jest.fn();
 let mockServer = fakeHostServer();
 const mockReplace = jest.fn();
@@ -26,17 +25,11 @@ jest.mock('@expo/ui/swift-ui', () => {
 jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, { get: (_, name) => (value: unknown) => ({ name, value }) }));
 jest.mock('@/storage/device-store', () => ({ deviceHostStore: () => ({ load: mockLoad }) }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
-jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ read: mockRead, onServer: mockServer.onServer }) }));
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 let renderer: ReactTestRenderer;
-const listed = (topics: { id: string; label: string }[]) => ({ kind: 'listed', snapshot: {
-  tags: [], sessions: [], no_topic: [], pinned: [],
-  unpinned: { limit: 3, places: [], guests: [], bench: topics.map((topic) => ({ kind: 'topic', mark: null, sessions: [],
-    topic: { ...topic, note: null, tags: [], state: 'empty' } })) },
-} });
 beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
-  mockRead.mockResolvedValue(listed([]));
   mockServer = fakeHostServer();
   // The `ok` of each `environment` request, or the error it ends with.
   mockServer.answer = (payload) => mockCreate(payload);
@@ -55,7 +48,7 @@ async function mount(title: string) {
 }
 
 it('saves before the Tags read answers, with no Tag', async () => {
-  mockRead.mockReturnValue(new Promise(() => {}));
+  mockServer.server.subscribe = () => Object.assign(new Promise(() => {}), { cancel: () => {} });
   await mount('Fix login');
   expect(save().props.disabled).toBe(false);
   await act(async () => { save().props.onPress(); });
@@ -64,8 +57,10 @@ it('saves before the Tags read answers, with no Tag', async () => {
 });
 
 it('keeps the title through a failed Tags read and its retry', async () => {
-  mockRead.mockRejectedValueOnce(new Error('offline'));
+  const snapshot = mockServer.pushes.snapshot;
+  delete mockServer.pushes.snapshot;
   await mount('Keep this title');
+  mockServer.pushes.snapshot = snapshot;
   await act(async () => { button('Retry Tags')!.props.onPress(); });
   expect(renderer.root.findByType(TextField).props.text.value).toBe('Keep this title');
 });

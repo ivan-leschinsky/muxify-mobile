@@ -9,7 +9,6 @@ import { toolbarButton, toolbarSide } from '@/test-support/toolbar';
 import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockLoad = jest.fn();
-const mockRead = jest.fn();
 const mockCreate = jest.fn();
 const mockPaths = jest.fn();
 const mockAdd = jest.fn();
@@ -44,9 +43,8 @@ jest.mock('@/storage/device-store', () => ({
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/attach-context', () => ({ useOpenSession: () => mockOpen }));
 jest.mock('@/tmux/ssh-connection', () => {
-  const muxify = () => ({ read: mockRead });
   const exec = async (command: string) => ({ stdout: command.includes('$HOME') ? '/Users/me\n' : '', stderr: '', exitCode: 0 });
-  const work = (_host: unknown, run: Function) => run({ exec }, muxify());
+  const work = (_host: unknown, run: Function) => run({ exec });
   return { appConnections: () => ({ read: work, write: work, onServer: mockServer.onServer }) };
 });
 
@@ -55,8 +53,8 @@ let renderer: ReactTestRenderer;
 beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
-  mockRead.mockResolvedValue({ kind: 'listed', snapshot: { tags: [{ name: 'work', color: { light: null, dark: null } }] } });
   mockServer = fakeHostServer();
+  mockServer.pushes.snapshot = { ...snapshotPush(), tags: [{ name: 'work', color: { light: '#5e8c6a', dark: '#7fa88a' } }] };
   // The `ok` of each `environment` request, or the error it ends with.
   mockServer.answer = (payload) => {
     const { command } = (payload as { environment: { command: Record<string, unknown> } }).environment;

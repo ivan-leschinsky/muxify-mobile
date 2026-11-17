@@ -3,7 +3,6 @@ import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import { INSTALL_TIMEOUT_MS, type HostCliState } from '@/topics/host-cli-install';
-import type { TopicsRead } from '@/topics/host-topics';
 import { sendEnvironment } from '@/topics/host-write-request';
 import type { TopicId } from '@/topics/environment';
 import { newRequestId, WriteOutcomeUnknown } from '@/topics/request';
@@ -14,7 +13,6 @@ import {
   ExecDeadlineError,
   IDLE_MS,
   type Dialed,
-  type ScreenUse,
 } from './host-connections';
 
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
@@ -59,15 +57,9 @@ interface FakeChannel {
   exit(code?: number): void;
 }
 
-/**
- * `capabilities` is what the Host CLI of every Connection offers in its
- * `environment show`. Without it, that command answers with no JSON, as every
- * other command does.
- */
 function setup(options: {
   verdict?: KeyVerdict;
   channels?: boolean;
-  capabilities?: string[];
   dialFails?: () => boolean;
   /** Each Connection starts with this `silentOn`. */
   silentOn?: string;
@@ -110,9 +102,6 @@ function setup(options: {
           if (link.silent || (link.silentOn && command.includes(link.silentOn))) return new Promise(() => {});
           if (link.breaksOn && command.includes(link.breaksOn)) link.connected = false;
           if (!link.connected) return Promise.reject(new Error('channel closed'));
-          if (options.capabilities && command.includes('environment show')) {
-            return Promise.resolve({ ...OK, stdout: JSON.stringify({ capabilities: options.capabilities }) });
-          }
           if (command === 'command -v muxify') {
             return Promise.resolve({ ...OK, stdout: '/usr/local/bin/muxify\n' });
           }
@@ -215,15 +204,6 @@ describe('the app’s Connections', () => {
     await attach.transport.exec('tmux display-message');
 
     expect(links).toHaveLength(1);
-  });
-
-  it('finds `muxify` once for each Connection', async () => {
-    const { links, connections } = setup();
-
-    await connections.read(HOST, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-    await connections.read(HOST, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-
-    expect(links[0]?.execs.filter((command) => command === 'command -v muxify')).toHaveLength(1);
   });
 
   it('remembers a Host key seen for the first time', async () => {
@@ -343,122 +323,6 @@ describe('the app’s Connections', () => {
     expect(links[0]?.execs.filter((command) => command === 'muxify topic new')).toHaveLength(1);
   });
 
-  describe('a write with a Request id', () => {
-    const request = newRequestId();
-    const create: ScreenUse<unknown> = (transport, muxify) =>
-      muxify.create((command) => transport.exec(command), 'Fix login', [], request);
-    const sends = (link: { execs: string[] } | undefined) => link?.execs.filter((command) => command.includes('topic new')) ?? [];
-    const SENT = `'/usr/local/bin/muxify' --request '${request}' topic new 'Fix login' --json`;
-
-    it('is sent one more time, with the same id, on a new Connection, when no answer comes before the deadline', async () => {
-      const { clock, links, connections } = setup({ capabilities: ['request'] });
-      await connections.read(HOST, ls);
-      links[0]!.silentOn = 'topic new';
-
-      const write = connections.write(HOST, create);
-      await settle();
-      clock.advance(EXEC_DEADLINE_MS);
-      await write;
-
-      expect(links).toHaveLength(2);
-      expect(links[0]?.disconnected).toBe(true);
-      expect(sends(links[0])).toEqual([SENT]);
-      expect(sends(links[1])).toEqual([SENT]);
-    });
-
-    it('is sent only one more time, and then may have reached the Host', async () => {
-      const { clock, links, connections } = setup({ capabilities: ['request'], silentOn: 'topic new' });
-
-      const write = connections.write(HOST, create);
-      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: true });
-      await settle();
-      clock.advance(EXEC_DEADLINE_MS);
-      await settle();
-      clock.advance(EXEC_DEADLINE_MS);
-      await failed;
-
-      expect(links).toHaveLength(2);
-      expect(sends(links[0])).toEqual([SENT]);
-      expect(sends(links[1])).toEqual([SENT]);
-    });
-
-    it('is sent one more time when the Connection breaks before the answer', async () => {
-      const { links, connections } = setup({ capabilities: ['request'] });
-      await connections.read(HOST, ls);
-      links[0]!.breaksOn = 'topic new';
-
-      await connections.write(HOST, create);
-
-      expect(links).toHaveLength(2);
-      expect(sends(links[0])).toEqual([SENT]);
-      expect(sends(links[1])).toEqual([SENT]);
-    });
-
-    it('is not sent again with no id when the Host CLI of the new Connection does not offer Request ids', async () => {
-      let offered = ['request'];
-      const { clock, links, connections } = setup({ get capabilities() { return offered; } });
-      await connections.read(HOST, ls);
-      links[0]!.silentOn = 'topic new';
-
-      const write = connections.write(HOST, create);
-      const failed = expect(write).rejects.toBeInstanceOf(WriteOutcomeUnknown);
-      await settle();
-      offered = [];
-      clock.advance(EXEC_DEADLINE_MS);
-      await failed;
-
-      expect(sends(links[1])).toEqual([]);
-    });
-
-    it('may have reached the Host when the second send cannot dial', async () => {
-      let down = false;
-      const { clock, links, connections } = setup({ capabilities: ['request'], dialFails: () => down });
-      await connections.read(HOST, ls);
-      links[0]!.silentOn = 'topic new';
-
-      const write = connections.write(HOST, create);
-      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: true });
-      await settle();
-      down = true;
-      clock.advance(EXEC_DEADLINE_MS);
-      await failed;
-
-      expect(links).toHaveLength(1);
-    });
-
-    it('goes out with no id, and is not sent again, on a Host CLI without the capability', async () => {
-      const { clock, links, logged, connections } = setup({ capabilities: [] });
-      await connections.read(HOST, ls);
-      links[0]!.silentOn = 'topic new';
-
-      const write = connections.write(HOST, create);
-      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: false });
-      await settle();
-      clock.advance(EXEC_DEADLINE_MS);
-      await failed;
-
-      expect(links).toHaveLength(1);
-      expect(sends(links[0])).toEqual([`'/usr/local/bin/muxify' topic new 'Fix login' --json`]);
-      expect(logged.filter((line) => line.includes('too old for Request ids'))).toHaveLength(1);
-    });
-
-    it('is sent again on the Connection that an Attach holds, which the registry does not close', async () => {
-      const { clock, links, connections } = setup({ capabilities: ['request'] });
-      const attach = await connections.openConnection(HOST);
-      attach.suspected?.(() => {});
-      links[0]!.silentOn = 'topic new';
-
-      const write = connections.write(HOST, create);
-      await settle();
-      links[0]!.silentOn = undefined;
-      clock.advance(EXEC_DEADLINE_MS);
-      await write;
-
-      expect(links).toHaveLength(1);
-      expect(sends(links[0])).toEqual([SENT, SENT]);
-    });
-  });
-
   it('fails a write with the error of the dial when no Connection opens, because nothing went out', async () => {
     const { connections } = setup({ dialFails: () => true });
 
@@ -540,9 +404,6 @@ describe('the app’s Connections', () => {
 });
 
 describe('the Host CLI install', () => {
-  const readTopics: ScreenUse<TopicsRead> = (transport, muxify) =>
-    muxify.read((command) => transport.exec(command));
-
   it('starts once when the Connection opens, on a channel of its own', async () => {
     const { links, connections } = setup({ channels: true });
 
@@ -658,33 +519,6 @@ describe('the Host CLI install', () => {
     expect(links[0]?.disconnected).toBe(true);
   });
 
-  it('makes the Topics module probe again on its next read after `installed` or `updated`', async () => {
-    for (const line of ['installed abc 1', 'updated abc 1 -> def 2']) {
-      const { links, connections } = setup({ channels: true });
-      await connections.read(HOST, readTopics);
-      await connections.read(HOST, readTopics);
-      const probes = () => links[0]?.execs.filter((command) => command === 'command -v muxify');
-      expect(probes()).toHaveLength(1);
-
-      links[0]!.channels[0]!.print(`${line}\n`);
-      await settle();
-      await connections.read(HOST, readTopics);
-
-      expect(probes()).toHaveLength(2);
-    }
-  });
-
-  it('keeps the found path after `current`', async () => {
-    const { links, connections } = setup({ channels: true });
-    await connections.read(HOST, readTopics);
-
-    links[0]!.channels[0]!.print('current abc 1\n');
-    await settle();
-    await connections.read(HOST, readTopics);
-
-    expect(links[0]?.execs.filter((command) => command === 'command -v muxify')).toHaveLength(1);
-  });
-
   it('waits for a changed Host key to be accepted, and never runs on a refused one', async () => {
     const { links, connections } = setup({ channels: true, verdict: { kind: 'changed', stored: 'SHA256:old' } });
 
@@ -717,6 +551,50 @@ describe('the Host Server', () => {
       protocol: 1,
     });
     expect(logged).toContain('connections: Mac: Host Server: muxify 7593671 1794697369, protocol 1');
+  });
+
+  it('finds `muxify` once for each Connection', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+
+    await connections.read(HOST, ls);
+    await connections.read(HOST, ls);
+    await settle();
+    await settle();
+
+    expect(links[0]?.execs.filter((command) => command === 'command -v muxify')).toHaveLength(1);
+  });
+
+  it('finds `muxify` again and starts on it after the install answers `installed` or `updated`', async () => {
+    for (const line of ['installed abc 1', 'updated abc 1 -> def 2']) {
+      const { links, connections } = setup({ channels: true, serverHello: CAPABLE });
+      await connections.read(HOST, ls);
+      await settle();
+      await settle();
+      const probes = () => links[0]?.execs.filter((command) => command === 'command -v muxify');
+      expect(probes()).toHaveLength(1);
+
+      links[0]!.channels[0]!.print(`${line}\n`);
+      await settle();
+      await settle();
+      await settle();
+
+      expect(probes()).toHaveLength(2);
+      expect(links[0]?.servers).toHaveLength(2);
+    }
+  });
+
+  it('keeps the found path after the install answers `current`', async () => {
+    const { links, connections } = setup({ channels: true, serverHello: CAPABLE });
+    await connections.read(HOST, ls);
+    await settle();
+    await settle();
+
+    links[0]!.channels[0]!.print('current abc 1\n');
+    await settle();
+    await settle();
+
+    expect(links[0]?.execs.filter((command) => command === 'command -v muxify')).toHaveLength(1);
+    expect(links[0]?.servers).toHaveLength(1);
   });
 
   it('names the Sessions-only reason in the Log', async () => {

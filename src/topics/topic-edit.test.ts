@@ -1,53 +1,32 @@
-import type { TmuxTransport } from '@/tmux/transport';
-
-import type { TopicId } from './environment';
-import { createMuxifyCli } from './muxify-cli';
-import type { RequestId } from './request';
 import {
   changes,
   fieldsFromParam,
   fieldsParam,
   saveTopicEdit,
   typedFields,
+  type TopicChange,
   type TopicFields,
+  type TopicWrite,
 } from './topic-edit';
 
-const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
 const ON_HOST: TopicFields = {
   title: 'Fix login',
   note: 'at step 3',
   tags: ['work', 'old'],
 };
 
-const REQUEST = '0b0e4a3c-6f1d-4c0a-9a57-2f3c1d9e8b10' as RequestId;
-
-/**
- * A Host with `muxify` on its PATH that records each command after the probe
- * and refuses the subcommands in `refuse`.
- */
-function host(refuse: string[] = []) {
-  const sent: string[] = [];
-  const exec: TmuxTransport['exec'] = async (command) => {
-    if (command.startsWith('command -v'))
-      return { stdout: '/opt/bin/muxify\n', stderr: '', exitCode: 0 };
-    // The first write asks what the Host CLI can do. This Host offers nothing.
-    if (command.includes('environment show')) return { stdout: '{}', stderr: '', exitCode: 0 };
-    sent.push(command.replace("'/opt/bin/muxify' ", '').replace(` --topic '${ID}' --json`, ''));
-    const refused = refuse.find((subcommand) => command.includes(subcommand));
-    return refused === undefined
-      ? { stdout: '{"changed":{}}', stderr: '', exitCode: 0 }
-      : {
-          stdout: JSON.stringify({ failed: { message: `no ${refused}` } }),
-          stderr: '',
-          exitCode: 1,
-        };
+/** A Host that records each change it is sent, and refuses the fields in `refuse`. */
+function host(refuse: TopicChange['field'][] = []) {
+  const sent: TopicChange[] = [];
+  const write = async (change: TopicChange): Promise<TopicWrite> => {
+    sent.push(change);
+    return refuse.includes(change.field) ? { kind: 'failed', error: `no ${change.field}` } : { kind: 'changed' };
   };
-  return { exec, sent };
+  return { write, sent };
 }
 
 function save(on: ReturnType<typeof host>, saved: TopicFields, wanted: TopicFields) {
-  const muxify = createMuxifyCli();
-  return saveTopicEdit(saved, wanted, (change) => muxify.change(on.exec, ID, change, REQUEST));
+  return saveTopicEdit(saved, wanted, on.write);
 }
 
 describe('Save on the Edit sheet', () => {
@@ -59,7 +38,7 @@ describe('Save on the Edit sheet', () => {
       note: 'at step 4',
     });
 
-    expect(on.sent).toEqual(["topic note 'at step 4'"]);
+    expect(on.sent).toEqual([{ field: 'note', note: 'at step 4' }]);
     expect(saved).toEqual({ ...ON_HOST, note: 'at step 4' });
     expect(errors).toEqual({});
   });
@@ -82,9 +61,9 @@ describe('Save on the Edit sheet', () => {
     });
 
     expect(on.sent).toEqual([
-      "topic rename 'Fix logout'",
-      'topic note --clear',
-      "topic tag set 'work'",
+      { field: 'title', title: 'Fix logout' },
+      { field: 'note', note: null },
+      { field: 'tags', tags: ['work'] },
     ]);
   });
 
@@ -94,22 +73,22 @@ describe('Save on the Edit sheet', () => {
       note: 'at step 4',
       tags: ['work'],
     };
-    const first = host(['topic note']);
+    const first = host(['note']);
 
     const partial = await save(first, ON_HOST, wanted);
 
     expect(first.sent).toEqual([
-      "topic rename 'Fix logout'",
-      "topic note 'at step 4'",
-      "topic tag set 'work'",
+      { field: 'title', title: 'Fix logout' },
+      { field: 'note', note: 'at step 4' },
+      { field: 'tags', tags: ['work'] },
     ]);
-    expect(partial.errors).toEqual({ note: 'no topic note' });
+    expect(partial.errors).toEqual({ note: 'no note' });
     expect(partial.saved).toEqual({ ...wanted, note: ON_HOST.note });
 
     const second = host();
     const retry = await save(second, partial.saved, wanted);
 
-    expect(second.sent).toEqual(["topic note 'at step 4'"]);
+    expect(second.sent).toEqual([{ field: 'note', note: 'at step 4' }]);
     expect(retry).toEqual({ saved: wanted, errors: {} });
   });
 });

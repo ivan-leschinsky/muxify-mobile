@@ -15,8 +15,8 @@ import {
   type HostCliState,
   type OpenCommandChannel,
 } from '@/topics/host-cli-install';
-import { createMuxifyCli, type MuxifyCli } from '@/topics/muxify-cli';
-import { RequestUnanswered, WriteOutcomeUnknown } from '@/topics/request';
+import { createMuxifyPath, type MuxifyPath } from '@/topics/muxify-path';
+import { WriteOutcomeUnknown } from '@/topics/request';
 
 /** How long a Connection with no Attach stays open after its last screen read. */
 export const IDLE_MS = 60_000;
@@ -44,8 +44,11 @@ export interface Dialed {
  */
 export type Dial = (host: Host, dropped: () => void, progress?: (step: ConnectStep) => void) => Promise<Dialed>;
 
-/** What a screen does with a Connection: its commands, and the Host's `muxify`. */
-export type ScreenUse<T> = (transport: TmuxTransport, muxify: MuxifyCli) => Promise<T>;
+/**
+ * What a screen does with a Connection's commands: tmux's own, as Sessions
+ * only and the Session form read and write them. Topics go on the Host Server.
+ */
+export type ScreenUse<T> = (transport: TmuxTransport) => Promise<T>;
 
 export interface ScreenOptions {
   /**
@@ -65,9 +68,8 @@ export interface HostConnections {
   read<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /**
    * A screen's write. When it goes out and no answer comes back, it fails with
-   * `WriteOutcomeUnknown`: it may have reached the Host. Before that, a write
-   * that went out with a Request id is sent one more time. A failure with
-   * another error means that nothing reached the Host.
+   * `WriteOutcomeUnknown`: it may have reached the Host, so it is not sent
+   * again. A failure with another error means that nothing reached the Host.
    */
   write<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /** React Native's app-state, forwarded as a fact. */
@@ -120,7 +122,8 @@ export class ExecDeadlineError extends Error {
 interface Entry {
   host: Host;
   dialed: Promise<Dialed>;
-  muxify: MuxifyCli;
+  /** Where `muxify` is on the Host, which the Host Server runs. */
+  muxify: MuxifyPath;
   /** The Host CLI install on this Connection, once it has started. It never rejects. */
   install: Promise<HostCliInstall> | null;
   /** The Host Server of this Connection, once it has started. */
@@ -184,7 +187,7 @@ export function createHostConnections(options: {
     const entry: Entry = {
       host,
       dialed,
-      muxify: createMuxifyCli((line) => say(`${host.displayName}: ${line}`)),
+      muxify: createMuxifyPath((line) => say(`${host.displayName}: ${line}`)),
       install: null,
       server: null,
       attaches: 0,
@@ -226,8 +229,7 @@ export function createHostConnections(options: {
   /**
    * Starts the Host Server of the Connection, once, with the `muxify` that the
    * probe finds. It does not wait for the install, which tells it its answer.
-   * It lives as long as the Connection. See the ADR draft in
-   * `.cook/tasks/host-server/adrs/the-phone-reaches-a-host-only-through-its-host-server.md`.
+   * It lives as long as the Connection. See ADR 0025.
    */
   function serve(entry: Entry, dialed: Dialed): void {
     if (entry.server || entry.gone || !dialed.openServerChannel) return;
@@ -269,7 +271,7 @@ export function createHostConnections(options: {
     publish(entry, { kind: 'running' });
     entry.install = installHostCli(dialed.openChannel, { clock }).then((result) => {
       say(`${host.displayName}: Host CLI: ${result.line}`);
-      if (result.kind === 'installed' || result.kind === 'updated') entry.muxify.forget();
+      // A new `muxify`: the Host Server forgets the path and starts on it.
       entry.server?.installAnswered(result);
       entry.uses -= 1;
       settle(entry);
@@ -355,16 +357,14 @@ export function createHostConnections(options: {
     host: Host,
     work: ScreenUse<T>,
     options: ScreenOptions | undefined,
-    unanswered?: RequestUnanswered,
   ): Promise<{ value: T } | { error: unknown; failedByConnection: boolean }> {
     const { entry, dialed } = await acquire(host);
     checkHostKey(entry, dialed, options);
     begin(entry, dialed);
-    if (unanswered) entry.muxify.resending(unanswered.request);
     entry.uses += 1;
     busy(entry);
     try {
-      return { value: await work(withDeadline(entry, dialed.transport), entry.muxify) };
+      return { value: await work(withDeadline(entry, dialed.transport)) };
     } catch (error) {
       return { error, failedByConnection: error instanceof ExecDeadlineError || !dialed.isConnected() };
     } finally {
@@ -386,31 +386,14 @@ export function createHostConnections(options: {
   /**
    * A write with no answer may have reached the Host, so a second send could
    * apply it two times. That is why a write is not sent again as a read is.
-   * A write that went out with a Request id is the exception: the Host keeps
-   * the id and applies the Request one time, and a second send gets the
-   * answer of the first. The phone then learns what the Host did, which it
-   * cannot learn another way. One second send is enough to cover an answer
-   * that was lost. See ADR 0021.
+   * Host Writes with a Request id go on the Host Server, which sends them
+   * again safely: see host-write-request.
    */
   async function write<T>(host: Host, work: ScreenUse<T>, options: ScreenOptions | undefined): Promise<T> {
     const first = await attempt(host, work, options);
     if ('value' in first) return first.value;
-    if (!(first.error instanceof RequestUnanswered)) {
-      if (first.failedByConnection) throw new WriteOutcomeUnknown(false, first.error);
-      throw first.error;
-    }
-    say(`${host.displayName}: a write with a Request id got no answer; sending the same Request again`);
-    try {
-      // A deadline closes a Connection that no Attach holds, so this send
-      // dials a new one. A Connection that an Attach holds is the Attach's to
-      // close, so this send can go out on that one. Each is safe: the Host
-      // lets one id run in one process at a time.
-      const second = await attempt(host, work, options, first.error);
-      if ('value' in second) return second.value;
-      throw second.error;
-    } catch (error) {
-      throw new WriteOutcomeUnknown(true, error);
-    }
+    if (first.failedByConnection) throw new WriteOutcomeUnknown(false, first.error);
+    throw first.error;
   }
 
   return {

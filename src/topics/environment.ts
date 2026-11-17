@@ -1,5 +1,6 @@
 /**
- * What `muxify environment show --json` says about a Host, as the phone holds it.
+ * What the Host Server pushes about a Host in its `snapshot` subscription, as
+ * the phone holds it. It has the layout of `muxify environment show --json`.
  *
  * The JSON has no version field, so this file is the one place that decides
  * what a shape means. Every array keeps the order it came in: the order is the
@@ -83,8 +84,6 @@ export interface Sidebar {
 }
 
 export interface EnvironmentSnapshot {
-  /** What this Host CLI can do past the first layout, such as take a Request id. A Host CLI from before the key has none. */
-  capabilities: readonly string[];
   /** Null from a Host CLI that does not say, which shows both views. */
   sidebar: Sidebar | null;
   /** In Config order. */
@@ -110,7 +109,6 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
   const root = object(json, 'environment');
   const unpinned = object(root.unpinned, 'unpinned');
   return {
-    capabilities: parseCapabilities(root),
     sidebar: parseSidebar(root.sidebar),
     tags: parseTags(root.tags),
     sessions: array(root.sessions, 'sessions').map((session, index) => {
@@ -137,15 +135,6 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
       sessionId(id, `no_topic[${index}]`),
     ),
   };
-}
-
-/**
- * The `capabilities` at the top of the answer: the names of what this Host CLI
- * can do, such as `request`. A Host CLI from before the key has none.
- */
-export function parseCapabilities(json: unknown): string[] {
-  const { capabilities } = object(json, 'environment');
-  return Array.isArray(capabilities) ? capabilities.filter((name): name is string => typeof name === 'string') : [];
 }
 
 function parseSidebar(value: unknown): Sidebar | null {

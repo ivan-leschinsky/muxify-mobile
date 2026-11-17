@@ -187,13 +187,12 @@ it('keeps optional Window seeds and tolerates new marks', () => {
 });
 
 describe('what the Host CLI says past the Topics', () => {
-  it('has no capability and no sidebar from a Host CLI that says neither', () => {
-    expect(parseEnvironment(snapshotWith({}))).toMatchObject({ capabilities: [], sidebar: null });
+  it('has no sidebar from a Host CLI that does not say', () => {
+    expect(parseEnvironment(snapshotWith({})).sidebar).toBeNull();
   });
 
-  it('keeps the capabilities that are names', () => {
-    expect(parseEnvironment(snapshotWith({ capabilities: ['request', 7, 'session-paths'] })).capabilities)
-      .toEqual(['request', 'session-paths']);
+  it('takes no capabilities from the snapshot: they come from the Host Server hello', () => {
+    expect(parseEnvironment(snapshotWith({ capabilities: ['request'] }))).not.toHaveProperty('capabilities');
   });
 
   it('reads which views the Config shows in the Sidebar', () => {

@@ -14,9 +14,9 @@
  * It serves `../muxify-shell/build/host-cli/` over HTTP from this Mac, which
  * the machine reaches at `host.orb.internal`, and sends the install runner's
  * own bootstrap to it over `ssh <machine>@orb`. The runner parses the answer:
- * `installed` the first time, `current` the second. The Topics module then
- * makes a Topic and reads it over the same SSH, through the `muxify` the
- * install put in `~/.local/bin`.
+ * `installed` the first time, `current` the second. The probe that finds the
+ * `muxify` for the Host Server then finds the one the install put in
+ * `~/.local/bin`, over the same SSH.
  *
  * Every command on the machine runs with a HOME and TMUX_TMPDIR of its own,
  * and without TMUX and TMUX_PANE, as e2e/sandbox.sh asks.
@@ -31,10 +31,8 @@ import { connect, createServer } from 'net';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 
-import type { Card } from '@/topics/environment';
 import { installHostCli, type OpenCommandChannel } from '@/topics/host-cli-install';
-import { createMuxifyCli } from '@/topics/muxify-cli';
-import { newRequestId } from '@/topics/request';
+import { createMuxifyPath } from '@/topics/muxify-path';
 import { shellQuote } from '@/tmux/commands';
 import type { TmuxExecResult } from '@/tmux/transport';
 
@@ -218,28 +216,14 @@ afterAll(() => {
     expect(uname.stdout.trim()).toBe(arch === 'arm64' ? 'aarch64' : 'x86_64');
   }, MACHINE_TIMEOUT_MS);
 
-  it('makes a Topic and reads it through the installed muxify', async () => {
+  it('finds the installed muxify, which answers --version', async () => {
     const log: string[] = [];
-    const cli = createMuxifyCli((line) => log.push(line));
-    const title = `e2e Host CLI ${arch} ${Date.now()}`;
+    const path = await createMuxifyPath((line) => log.push(line)).locate(exec);
 
-    const created = await cli.create(exec, title, [], newRequestId());
-    expect(created).toMatchObject({ kind: 'created' });
-    if (created.kind !== 'created') return;
+    expect(path).toBe(`${home}/.local/bin/muxify`);
     expect(log).toContain(`found muxify at ${home}/.local/bin/muxify by ~/.local/bin`);
-
-    const read = await cli.read(exec);
-    expect(read.kind).toBe('listed');
-    if (read.kind !== 'listed') return;
-    const { pinned, unpinned } = read.snapshot;
-    const cards: Card[] = [
-      ...pinned,
-      ...unpinned.places,
-      ...unpinned.guests,
-      ...unpinned.bench,
-    ];
-    expect(cards).toContainEqual(
-      expect.objectContaining({ kind: 'topic', topic: expect.objectContaining({ id: created.topic, label: title }) }),
-    );
+    const version = await exec(`${shellQuote(path!)} --version`);
+    expect(version.exitCode).toBe(0);
+    expect(version.stdout.trim()).not.toBe('');
   }, MACHINE_TIMEOUT_MS);
 });

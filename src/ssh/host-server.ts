@@ -53,7 +53,7 @@ export const unavailable = {
 
 /**
  * The Host Server of one Connection, for every Host read and write of the
- * phone. See `.cook/tasks/host-server/adrs/the-phone-reaches-a-host-only-through-its-host-server.md`.
+ * phone. See ADR 0025.
  */
 export interface HostServer {
   state(): HostServerState;

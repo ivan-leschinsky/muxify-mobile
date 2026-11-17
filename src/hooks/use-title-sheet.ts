@@ -80,7 +80,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   const topicsOn = chooserLists.includes('topics');
   const windowsOn = chooserLists.includes('windows');
   const sessionsOn = chooserLists.includes('sessions');
-  const { topics: hostTopics, listing, read: readHost } = useHostReading(hostId ?? '', topicsOn);
+  const { topics: hostTopics, listing, read: readHost } = useHostReading(hostId ?? '');
   const pickerTopics = useMemo(
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
     [topicsOn, hostTopics, appearance],

@@ -23,7 +23,7 @@ export type TopicChange =
   | { field: 'note'; note: string | null }
   | { field: 'tags'; tags: readonly string[] };
 
-/** What one write came to. `unknown` is a Request in doubt (exit status 4): the Host may have made the change. */
+/** What one write came to. `unknown` is a Request in doubt: the Host may have made the change. */
 export type TopicWrite = { kind: 'changed' } | { kind: 'failed'; error: string } | UnknownOutcome;
 
 /** The Host's reason, under the field whose write it refused. */

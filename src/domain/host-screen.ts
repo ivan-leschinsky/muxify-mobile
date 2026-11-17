@@ -16,11 +16,11 @@ export type HostScreenTab = 'topics' | 'sessions';
  * The tabs the Host Screen shows, in their order. The Host's Config decides,
  * through `sidebar` in the snapshot, so the Mac and the phone show the same
  * views. A Host CLI that does not say shows both. A Host with no Topics to
- * read (no Host CLI, an old one, or no snapshot yet) shows the Sessions only.
+ * read (no Host CLI, one being updated, or no snapshot yet) shows the Sessions only.
  */
 export function hostScreenTabs(topics: HostTopics): readonly [HostScreenTab, ...HostScreenTab[]] {
   const snapshot = lastSnapshot(topics);
-  if (snapshot === null || topics.kind === 'old' || topics.kind === 'updating') return ['sessions'];
+  if (snapshot === null || topics.kind === 'updating') return ['sessions'];
   const { sidebar } = snapshot;
   if (sidebar === null || sidebar.topics === sidebar.sessions) return ['topics', 'sessions'];
   return sidebar.topics ? ['topics'] : ['sessions'];
@@ -183,7 +183,7 @@ interface CardsContext {
 
 /**
  * The Topics list. Before a snapshot, it is one Topics section with a row that
- * says why. A failed read, an old Host CLI and its update put their row above
+ * says why. A failure and a Host CLI update put their row above
  * the last snapshot's cards.
  */
 function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
@@ -198,18 +198,11 @@ function topicsList(topics: HostTopics, context: CardsContext): HostScreenSectio
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
 }
 
-/** The row that says why the Topics are not as the Host has them now: an install, an old Host CLI, a failed read, or no Host Server. */
+/** The row that says why the Topics are not as the Host has them now: an install or update, a failure, or no Host Server. */
 function topicsNotice(topics: HostTopics): HostScreenRow[] {
   switch (topics.kind) {
     case 'installing':
       return [{ kind: 'checking', text: 'Installing Muxify on this Host…' }];
-    case 'old':
-      return [{
-        kind: 'note',
-        text: topics.failure === undefined
-          ? 'Update Muxify on this Host'
-          : `Update Muxify on this Host. Could not update it: ${topics.failure}`,
-      }];
     case 'updating':
       return [{ kind: 'checking', text: 'Updating Muxify on this Host…' }];
     case 'failed':
@@ -357,7 +350,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * The Sessions tab: every running Session in the order the Host lists them,
  * which is the order the Mac's Sessions view shows. A Host with Topics says
  * which Topic each Session is in. A row above them says why the Host has no
- * Topics tab, when the Host CLI is old, is being installed, or failed.
+ * Topics tab, when the Host CLI is being installed or updated, or failed.
  */
 function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
   const rows: HostScreenRow[] = runningSessions(listing, topics)?.map((session) => ({

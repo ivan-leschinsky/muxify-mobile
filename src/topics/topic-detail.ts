@@ -1,6 +1,6 @@
 /**
- * What the Host says about one Topic, in a Host Server's `topic` push or
- * `muxify topic show --json --topic <id>`, as the Attach holds it. Sessions and Windows keep the order they came in,
+ * What the Host says about one Topic, in a Host Server's `topic` push, as the
+ * Attach holds it. Sessions and Windows keep the order they came in,
  * which is the Mac's order.
  */
 
@@ -145,7 +145,7 @@ export function topicStartingFrom(seed: TopicDetail | null): TopicView {
 }
 
 /**
- * A Topic as the Host Screen's `environment show` already knows it: its card,
+ * A Topic as the Host Screen's pushed snapshot already knows it: its card,
  * with its live Sessions and Windows in card order. A Session id the snapshot
  * does not contain is left out.
  */

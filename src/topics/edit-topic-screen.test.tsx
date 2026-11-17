@@ -3,12 +3,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, TextField } from '@expo/ui/swift-ui';
 
 import TopicEditScreen from '@/app/topic-edit';
-import { fakeHostServer, lost, refused, topicPush } from '@/test-support/fake-host-server';
+import { fakeHostServer, lost, refused, snapshotPush, topicPush } from '@/test-support/fake-host-server';
 import { toolbarButton } from '@/test-support/toolbar';
 
 
 const mockLoad = jest.fn();
-const mockRead = jest.fn();
 const mockChange = jest.fn();
 let mockServer = fakeHostServer();
 const mockBack = jest.fn();
@@ -31,7 +30,6 @@ jest.mock('@/storage/device-store', () => ({ deviceHostStore: () => ({ load: moc
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/ssh/connect-host', () => ({ describeConnectionFailure: (value: Error) => value.message }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({
-  read: (_host: unknown, work: Function) => work({ exec: jest.fn() }, { read: mockRead }),
   onServer: mockServer.onServer,
 }) }));
 
@@ -44,8 +42,8 @@ const fields = () => renderer.root.findAllByType(TextField);
 beforeEach(() => {
   jest.clearAllMocks();
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Dev Host' }] });
-  mockRead.mockResolvedValue({ kind: 'listed', snapshot: { tags: [] } });
   mockServer = fakeHostServer();
+  mockServer.pushes.snapshot = snapshotPush();
   // The `ok` of each `environment` request, or the error it ends with.
   mockServer.answer = (payload) => mockChange((payload as { environment: unknown }).environment);
   mockChange.mockResolvedValue({ changed: { topic_id: 'topic' } });

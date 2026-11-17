@@ -9,16 +9,6 @@ export const REQUEST_MISMATCH_ERROR = 'Muxify sent this change in a way that the
 /** A UUID that names one thing the user asked for. The Host applies it one time. */
 export type RequestId = string & { readonly __brand: 'RequestId' };
 
-/** The capability name in `environment show --json` of a Host CLI that takes `--request`. */
-export const REQUEST_CAPABILITY = 'request';
-
-/**
- * The capability name of a Host CLI that lists Session Paths with no Topic
- * (`session-paths`) and records a visit. With it, the phone shows Go to and
- * the one-sheet New Topic.
- */
-export const SESSION_PATHS_CAPABILITY = 'session-paths';
-
 /**
  * A new id, in the UUID layout that the Host CLI accepts. Hermes has no
  * `crypto.randomUUID`. The id is a name and not a secret, so `Math.random`
@@ -33,27 +23,13 @@ export function newRequestId(): RequestId {
 }
 
 /**
- * Exit status 4: the Host says that the Request changed its records and did
- * not finish, and that its command is not safe to run again. `message` is the
- * Host's words. The change may have reached the Host.
+ * The Host says that the Request changed its records and did not finish, and
+ * that its command is not safe to run again. `message` is the Host's words.
+ * The change may have reached the Host.
  */
 export interface UnknownOutcome {
   kind: 'unknown';
   message: string;
-}
-
-/**
- * The exec of a write that went out with `--request` ended with no answer. The
- * same Request can go out again: the Host applies it one time.
- */
-export class RequestUnanswered extends Error {
-  constructor(
-    readonly request: RequestId,
-    readonly cause: unknown,
-  ) {
-    super('The Host did not answer the Request.');
-    this.name = 'RequestUnanswered';
-  }
 }
 
 /**
