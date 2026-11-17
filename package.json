@@ -74,6 +74,7 @@
     "e2e:go-to": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/go-to.test.ts",
     "e2e:go-to-screen": "bash e2e/go-to.sh",
     "e2e:host-cli": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/host-cli.test.ts",
+    "e2e:host-server": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/host-server.test.ts",
     "e2e:tmux-keys": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/tmux-keys.test.ts",
     "e2e:topic-screen": "bash e2e/topic-screen.sh",
     "e2e:new-topic": "bash e2e/new-topic.sh",

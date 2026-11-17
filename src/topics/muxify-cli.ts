@@ -194,6 +194,13 @@ export interface MuxifyCli {
   resending(request: RequestId): void;
 
   /**
+   * Where `muxify` is on the Host, or null when it is not there: the path that
+   * every call runs, found once by the probe. The Host Server runs it as
+   * `'<muxify>' server`.
+   */
+  locate(exec: Exec): Promise<string | null>;
+
+  /**
    * Forgets where `muxify` was found and what it can do, so the next call
    * probes again. The registry calls it when the Host CLI install answers
    * `installed` or `updated`, which puts a new one in `~/.local/bin`.
@@ -424,6 +431,8 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       const parsed = await answerTo(exec, `browser tabs --window ${shellQuote(window)} --json`, parseBrowserTabs);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', tabs: parsed.value };
     },
+
+    locate,
 
     resending(request) {
       resent.add(request);

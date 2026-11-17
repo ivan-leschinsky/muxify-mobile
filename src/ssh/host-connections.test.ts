@@ -40,6 +40,8 @@ interface FakeLink {
   drop: () => void;
   /** The non-PTY channels opened on it: the Host CLI install's. */
   channels: FakeChannel[];
+  /** The Host Server channels opened on it. */
+  servers: FakeChannel[];
 }
 
 /** A non-PTY channel, which the test answers as the Host would. */
@@ -62,6 +64,8 @@ function setup(options: {
   dialFails?: () => boolean;
   /** Each Connection starts with this `silentOn`. */
   silentOn?: string;
+  /** Each Connection can run a Host Server, which says this `hello` once its channel opens. */
+  serverHello?: string;
 } = {}) {
   const clock = createTestClock();
   const links: FakeLink[] = [];
@@ -90,6 +94,7 @@ function setup(options: {
           dropped();
         },
         channels: [],
+        servers: [],
       };
       links.push(link);
       const transport: TmuxTransport = {
@@ -126,9 +131,30 @@ function setup(options: {
           },
         });
       };
+      const openServerChannel: Dialed['openServerChannel'] = (command, events) => {
+        const channel: FakeChannel = {
+          command,
+          closed: false,
+          print: (text) => events.onData(new TextEncoder().encode(text).buffer as ArrayBuffer),
+          exit: (code) => {
+            channel.closed = true;
+            events.onClosed(code);
+          },
+        };
+        link.servers.push(channel);
+        setTimeout(() => channel.print(`MUXIFY-PROTOCOL\n${options.serverHello}\n`), 0);
+        return Promise.resolve({
+          write: () => {},
+          close: () => {
+            channel.closed = true;
+            return Promise.resolve();
+          },
+        });
+      };
       return Promise.resolve({
         transport,
         ...(options.channels ? { openChannel } : {}),
+        ...(options.serverHello ? { openServerChannel } : {}),
         fingerprint: `SHA256:${links.length}`,
         verdict: options.verdict ?? { kind: 'first-sight' },
         isConnected: () => link.connected,
@@ -625,5 +651,56 @@ describe('the Host CLI install', () => {
 
     await connections.read(HOST, ls, { onHostKey: () => true });
     expect(links[1]?.channels).toHaveLength(1);
+  });
+});
+
+describe('the Host Server', () => {
+  const CAPABLE =
+    '{"hello":{"build":"muxify 7593671 1794697369","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs"],"protocol":1},"id":0,"kind":"hello"}';
+  const BARE = '{"hello":{"build":"muxify 1a2b3c4 1763100000","capabilities":[],"protocol":1},"id":0,"kind":"hello"}';
+
+  it('starts when the Connection opens, with the probed muxify, and the Log names its build', async () => {
+    const { links, logged, connections } = setup({ serverHello: CAPABLE });
+
+    await connections.read(HOST, ls);
+    await settle();
+    await settle();
+
+    expect(links[0]?.servers.map((channel) => channel.command)).toEqual(["'/usr/local/bin/muxify' server"]);
+    expect(connections.hostServer(HOST.id)?.state()).toEqual({
+      kind: 'live',
+      build: 'muxify 7593671 1794697369',
+      protocol: 1,
+    });
+    expect(logged).toContain('connections: Mac: Host Server: muxify 7593671 1794697369, protocol 1');
+  });
+
+  it('names the Sessions-only reason in the Log', async () => {
+    const { logged, connections } = setup({ serverHello: BARE });
+
+    await connections.read(HOST, ls);
+    await settle();
+    await settle();
+
+    expect(connections.hostServer(HOST.id)?.state()).toMatchObject({ kind: 'sessions-only' });
+    expect(logged).toContain(
+      "connections: Mac: Host Server: Sessions only: the Host's muxify is too old (muxify 1a2b3c4 1763100000)",
+    );
+  });
+
+  it('closes with its Connection, and a new Connection starts a new one', async () => {
+    const { links, connections } = setup({ serverHello: CAPABLE });
+    await connections.read(HOST, ls);
+    await settle();
+    const first = connections.hostServer(HOST.id);
+
+    links[0]!.drop();
+    await connections.read(HOST, ls);
+    await settle();
+
+    expect(first?.state()).toEqual({ kind: 'closed' });
+    expect(links[0]?.servers[0]?.closed).toBe(true);
+    expect(links[1]?.servers).toHaveLength(1);
+    expect(connections.hostServer(HOST.id)).not.toBe(first);
   });
 });

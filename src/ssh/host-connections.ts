@@ -1,9 +1,11 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
+import { createHostServer, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { ConnectStep, HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
+import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 import {
   installHostCli,
@@ -25,6 +27,8 @@ export interface Dialed {
   upload?: HostConnection['upload'];
   /** Opens a non-PTY channel for one command, outside the screen exec and its deadline. */
   openChannel?: OpenCommandChannel;
+  /** Opens a non-PTY channel whose stderr stays apart from its stdout: the Host Server's. */
+  openServerChannel?: OpenServerChannel;
   fingerprint: string;
   verdict: KeyVerdict;
   isConnected(): boolean;
@@ -74,6 +78,8 @@ export interface HostConnections {
   hostCli(hostId: string): HostCliState;
   /** Hears every change of a Host's install. Answers the way to stop hearing. */
   subscribeHostCli(listener: (hostId: string, state: HostCliState) => void): () => void;
+  /** The Host Server of the Host's open Connection, or null when none runs. */
+  hostServer(hostId: string): HostServer | null;
 }
 
 /** An exec that passed its deadline. Its Connection is suspect. */
@@ -90,6 +96,8 @@ interface Entry {
   muxify: MuxifyCli;
   /** The Host CLI install on this Connection, once it has started. It never rejects. */
   install: Promise<HostCliInstall> | null;
+  /** The Host Server of this Connection, once it has started. */
+  server: HostServer | null;
   /** Attaches that hold it. */
   attaches: number;
   /** Screen reads and writes in flight on it. */
@@ -115,6 +123,8 @@ export function createHostConnections(options: {
   store: Pick<HostStore, 'rememberFingerprint'>;
   clock?: Clock;
   log?: Log;
+  /** The phone's build line, which its Host Server `hello` carries. */
+  build?: string;
 }): HostConnections {
   const { dial, store } = options;
   const clock = options.clock ?? systemClock;
@@ -146,6 +156,7 @@ export function createHostConnections(options: {
       dialed,
       muxify: createMuxifyCli((line) => say(`${host.displayName}: ${line}`)),
       install: null,
+      server: null,
       attaches: 0,
       uses: 0,
       idle: null,
@@ -155,8 +166,8 @@ export function createHostConnections(options: {
     self = entry;
     entry.dialed.then(
       (opened) => {
-        // A changed Host key waits for a screen to accept it: see run().
-        if (opened.verdict.kind !== 'changed') install(entry, opened);
+        // A changed Host key waits for a screen to accept it: see attempt().
+        if (opened.verdict.kind !== 'changed') begin(entry, opened);
       },
       () => {
         entry.gone = true;
@@ -176,6 +187,34 @@ export function createHostConnections(options: {
     for (const listener of [...hostCliListeners]) listener(hostId, state);
   }
 
+  /** What a Connection starts once its Host key is accepted: its Host Server and the Host CLI install. */
+  function begin(entry: Entry, dialed: Dialed): void {
+    serve(entry, dialed);
+    install(entry, dialed);
+  }
+
+  /**
+   * Starts the Host Server of the Connection, once, with the `muxify` that the
+   * probe finds. It does not wait for the install, which tells it its answer.
+   * It lives as long as the Connection. See the ADR draft in
+   * `.cook/tasks/host-server/adrs/the-phone-reaches-a-host-only-through-its-host-server.md`.
+   */
+  function serve(entry: Entry, dialed: Dialed): void {
+    if (entry.server || entry.gone || !dialed.openServerChannel) return;
+    const { host } = entry;
+    const exec = dialed.transport.exec;
+    entry.server = createHostServer({
+      open: dialed.openServerChannel,
+      locate: () => entry.muxify.locate(exec),
+      forget: () => entry.muxify.forget(),
+      version: async (path) => (await exec(`${shellQuote(path)} --version`)).stdout.trim().split('\n')[0] ?? '',
+      connected: () => !entry.gone && dialed.isConnected(),
+      build: options.build ?? 'Muxify phone',
+      clock,
+      say: (line) => say(`${host.displayName}: Host Server: ${line}`),
+    });
+  }
+
   /**
    * Installs or updates the Host CLI, once per Connection, on a channel of its
    * own: it never goes through withDeadline, so a long download never makes
@@ -192,6 +231,7 @@ export function createHostConnections(options: {
     entry.install = installHostCli(dialed.openChannel, { clock }).then((result) => {
       say(`${host.displayName}: Host CLI: ${result.line}`);
       if (result.kind === 'installed' || result.kind === 'updated') entry.muxify.forget();
+      entry.server?.installAnswered(result);
       entry.uses -= 1;
       settle(entry);
       publish(entry, { kind: 'done', result });
@@ -205,6 +245,7 @@ export function createHostConnections(options: {
     entry.gone = true;
     clock.cancel(entry.idle);
     entry.idle = null;
+    entry.server?.close();
     if (entries.get(entry.host.id) === entry) entries.delete(entry.host.id);
     say(`${entry.host.displayName}: closed (${why})`);
     return entry.dialed.then((dialed) => dialed.disconnect()).catch(() => {});
@@ -279,7 +320,7 @@ export function createHostConnections(options: {
   ): Promise<{ value: T } | { error: unknown; failedByConnection: boolean }> {
     const { entry, dialed } = await acquire(host);
     checkHostKey(entry, dialed, options);
-    install(entry, dialed);
+    begin(entry, dialed);
     if (unanswered) entry.muxify.resending(unanswered.request);
     entry.uses += 1;
     busy(entry);
@@ -375,6 +416,8 @@ export function createHostConnections(options: {
     write,
 
     hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
+
+    hostServer: (hostId) => entries.get(hostId)?.server ?? null,
 
     subscribeHostCli(listener) {
       hostCliListeners.add(listener);
