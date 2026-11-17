@@ -232,6 +232,12 @@ export interface Attach {
   showTopic(): () => void;
   /** Follows the Topic again with a new subscription: the Title Sheet's Retry. */
   refreshTopic(): void;
+  /**
+   * The Terminal Screen came into focus: Unread on visit for the Topic of the
+   * Session shown, once the Session is attached. A Session in no Topic sends
+   * nothing.
+   */
+  terminalFocused(): void;
   selectWindow(index: number): Promise<void>;
   /**
    * Optimistic: moves the Pane here first and puts it back if refused.
@@ -339,6 +345,12 @@ export interface AttachOptions {
    * is called, and hears each push as a read. See `followTopic`.
    */
   followTopic?: (hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void) => () => void;
+  /**
+   * Unread on visit: clears the Unread of the Topic whose Session the Attach
+   * shows, as the Mac does on a visit. Fire and forget: it shows nothing. See
+   * `markTopicRead`.
+   */
+  markTopicRead?: (hostId: string, topicId: TopicId) => void;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
   /** The Theme's colours, for the Panes to report. Null reports nothing until coloursChanged. */
@@ -864,9 +876,24 @@ export function openAttach(options: AttachOptions): Attach {
     }).catch(() => {});
   }
 
+  /** Whether the Terminal Screen came into focus before the Session was attached, so its visit waits for it. */
+  let visitWaiting = false;
+
+  /** Unread on visit for the Topic of the Session shown. A Session in no Topic sends nothing. */
+  function visitTopic(): void {
+    if (closed) return;
+    if (state.phase.kind !== 'connected') {
+      visitWaiting = true;
+      return;
+    }
+    visitWaiting = false;
+    if (state.topic) options.markTopicRead?.(host.id, state.topic.id);
+  }
+
   function acceptDestination(destination: SessionDestination): void {
     const topic = destination.topic;
     const otherTopic = (topic?.id ?? null) !== (state.topic?.id ?? null);
+    const moved = otherTopic || destination.sessionName !== state.sessionName;
     if (otherTopic) shownTab = null;
     // The Topic followed now keeps its view: its subscription pushes each change.
     const followed = topic !== null && !otherTopic && state.topic !== null && topicFeed?.id === topic.id;
@@ -875,6 +902,8 @@ export function openAttach(options: AttachOptions): Attach {
       : null });
     followTopic();
     if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
+    // The Attach switched to a Session of a Topic: the Mac's visit.
+    if (moved && state.phase.kind === 'connected') visitTopic();
   }
 
   /** How many screens show the Topic now. Its detail is followed only while one does. */
@@ -1120,6 +1149,7 @@ export function openAttach(options: AttachOptions): Attach {
       // and a Session that refused to attach is not somewhere you have been.
       arrived(state.sessionName, state.topic?.id ?? null);
       followTopic();
+      if (visitWaiting) visitTopic();
 
       // Size first, so the capture that follows is of a Pane the size of the
       // Surface rather than of whatever the last Client left it.
@@ -1382,6 +1412,8 @@ export function openAttach(options: AttachOptions): Attach {
     },
 
     refreshTopic,
+
+    terminalFocused: visitTopic,
 
     showTopic(): () => void {
       topicShown += 1;

@@ -543,6 +543,10 @@ export default function TerminalScreen() {
     setScreenFocused(true);
     return () => setScreenFocused(false);
   }, []));
+  // Unread on visit: the Terminal Screen in focus shows the Attach's Session, as a visit on the Mac does.
+  useFocusEffect(useCallback(() => {
+    attach?.terminalFocused();
+  }, [attach]));
 
   const sheetOpen = picker.open || chooser.sheet.isPresented;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({

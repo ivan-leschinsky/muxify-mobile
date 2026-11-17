@@ -354,6 +354,12 @@ Session shows under the Bench row, also while the Bench is open, until the
 user opens the No Topic row, which lists it.
 _Avoid_: current card, pinned card
 
+**Unread on visit**:
+The Mac's rule that showing a Session clears its Topic's Unread. The phone
+follows it while the Attach shows a Session: when the Terminal Screen comes
+into focus and when the Attach switches Session.
+_Avoid_: auto-read, mark seen
+
 **No Topic**:
 The Sessions on a Host that belong to no Topic. The Topics tab of the Host
 Screen shows them in a separate group after the Topics and the Bench. Its No

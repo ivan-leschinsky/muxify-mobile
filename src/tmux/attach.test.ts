@@ -405,6 +405,7 @@ function attachOn(
     topicId?: string;
     restore?: TopicPlace;
     followTopic?: AttachOptions['followTopic'];
+    markTopicRead?: AttachOptions['markTopicRead'];
     zoomed?: boolean;
     upload?: Upload;
     colours?: PaneColours;
@@ -432,6 +433,7 @@ function attachOn(
     zoomed: options.zoomed ?? true,
     colours: options.colours,
     followTopic: options.followTopic,
+    markTopicRead: options.markTopicRead,
     store,
     clock,
     log,
@@ -3086,5 +3088,87 @@ describe('the Topic Place', () => {
     await settle();
     expect(where(kit)).toBe('@1 %3');
     expect(kit.attach.state().topic?.id).toBe('a');
+  });
+});
+
+describe('Unread on visit', () => {
+  const topic = (id: string): TopicDetail => ({ id: id as TopicId, label: id, note: null,
+    tags: [], state: 'live', sessions: [] });
+  const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
+  function visits() {
+    const marked: string[] = [];
+    return { marked, markTopicRead: (hostId: string, topicId: TopicId) => { marked.push(`${hostId} ${topicId}`); } };
+  }
+
+  it('marks the shown Session\'s Topic read when the Terminal Screen comes into focus', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+    expect(marked).toEqual([]);
+
+    kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 a']);
+    kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 a', 'host-1 a']);
+  });
+
+  it('waits for the Session to attach when the Terminal Screen comes into focus first', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    kit.attach.terminalFocused();
+    expect(marked).toEqual([]);
+
+    await connected(kit);
+    expect(marked).toEqual(['host-1 a']);
+  });
+
+  it('marks the Topic read when the Attach switches to a Session of a Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+
+    await kit.attach.switchSession(destination('play', 'b'));
+    await settle();
+    expect(marked).toEqual(['host-1 b']);
+
+    kit.hosts[0].notify('%session-changed $3 elsewhere');
+    await settle();
+    expect(kit.attach.state().topic).toBeNull();
+    expect(marked).toEqual(['host-1 b']);
+  });
+
+  it('marks the Topic read when the Host switches the Client to a sibling Session of the Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
+    const kit = attachOn({ topicId: 'a', markTopicRead, followTopic: topicFeeds({ kind: 'shown', topic: detail }).follow });
+    kit.attach.showTopic();
+    await connected(kit);
+
+    kit.hosts[0].notify('%session-changed $2 play');
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(marked).toEqual(['host-1 a']);
+  });
+
+  it('sends nothing for a Session in no Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ markTopicRead });
+    kit.attach.terminalFocused();
+    await connected(kit);
+    kit.attach.terminalFocused();
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    expect(marked).toEqual([]);
+  });
+
+  it('sends nothing after a plain same-Session pick or a rename', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+    await kit.attach.switchSession(destination('work', 'a'));
+    kit.hosts[0].notify('%session-renamed $1 renamed');
+    await settle();
+    expect(marked).toEqual([]);
   });
 });

@@ -61,6 +61,7 @@
     "e2e:roundtrip": "bash e2e/ls-round-trip.sh",
     "e2e:pickers": "bash e2e/pickers.sh",
     "e2e:session-actions": "bash e2e/session-window-actions.sh",
+    "e2e:unread-on-visit": "bash e2e/unread-on-visit.sh",
     "e2e:regressions": "bash e2e/regressions.sh",
     "e2e:header": "bash e2e/header.sh",
     "e2e:key-row": "bash e2e/key-row.sh",
