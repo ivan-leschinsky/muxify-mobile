@@ -35,6 +35,8 @@ export interface RowActions {
   onMove?: (row: TopicRow) => void;
   /** Asks how to Settle the Topic, from its long-press menu. A screen that does not pass it gives the card no Settle… item. */
   onSettle?: (row: TopicRow) => void;
+  /** Asks how to Forget the Topic, from its long-press menu. A screen that does not pass it gives the card no Forget… item. */
+  onForget?: (row: TopicRow) => void;
   /** Offers the Topics that can fill an Open Place. A screen that does not pass it leaves the Open Place untappable. */
   onFillPlace?: (row: OpenPlaceRow) => void;
   onToggle: (row: OpenableRow) => void;
@@ -163,10 +165,12 @@ export function HostScreenRowView({
           </HStack>
         </Button>
 )
-      const { onWake, onTopicAction, onMove, onSettle } = actions;
+      const { onWake, onTopicAction, onMove, onSettle, onForget } = actions;
       const wakes = row.seed.state === 'dormant' && onWake !== undefined;
       const orders = onTopicAction === undefined ? [] : menuActions(row);
-      if (!wakes && orders.length === 0 && onMove === undefined && onSettle === undefined) return card;
+      if (!wakes && orders.length === 0 && onMove === undefined && onSettle === undefined && onForget === undefined) {
+        return card;
+      }
       return (
         <ContextMenu>
           <ContextMenu.Items>
@@ -209,6 +213,14 @@ export function HostScreenRowView({
                 systemImage={TOPIC_ACTION_ICON.settle}
                 onPress={() => onSettle(row)}
                 modifiers={[accessibilityLabel('Settle…')]}
+              />
+            )}
+            {onForget === undefined ? null : (
+              <Button
+                label="Forget…"
+                systemImage={TOPIC_ACTION_ICON.forget}
+                onPress={() => onForget(row)}
+                modifiers={[accessibilityLabel('Forget…')]}
               />
             )}
           </ContextMenu.Items>

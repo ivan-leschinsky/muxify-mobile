@@ -72,6 +72,7 @@ import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach
 import type { TopicId } from '@/topics/environment';
 import { lastSnapshot } from '@/topics/host-topics';
 import {
+  closeAlert,
   SWIPE_LABEL,
   swipeAction,
   TOPIC_ACTION_ICON,
@@ -255,16 +256,14 @@ export default function HostScreen() {
     void dropOnHost(topic.id, { kind: 'fill', place: choices.place });
   };
 
-  const askSettle = (row: TopicRow) =>
-    Alert.alert(`Settle ${row.label}?`, 'Settle keeps its Sessions running. Its Worktrees stay in both cases.', [
-      { text: TOPIC_ACTION_LABEL.settle, onPress: () => void actFromMenu(row.id, 'settle') },
-      {
-        text: TOPIC_ACTION_LABEL['settle-stopping-sessions'],
-        style: 'destructive',
-        onPress: () => void actFromMenu(row.id, 'settle-stopping-sessions'),
-      },
+  const askClose = (close: 'settle' | 'forget') => (row: TopicRow) => {
+    const alert = closeAlert(close, row.label);
+    Alert.alert(alert.title, alert.message, [
+      { text: TOPIC_ACTION_LABEL[alert.keep], onPress: () => void actFromMenu(row.id, alert.keep) },
+      { text: TOPIC_ACTION_LABEL[alert.stop], style: 'destructive', onPress: () => void actFromMenu(row.id, alert.stop) },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  };
 
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
@@ -273,7 +272,8 @@ export default function HostScreen() {
     onWake: (row, wake) => void cardWrites.order(row.id, { kind: 'wake', wake }),
     onTopicAction: (row, action) => void actFromMenu(row.id, action),
     onMove: startMove,
-    onSettle: askSettle,
+    onSettle: askClose('settle'),
+    onForget: askClose('forget'),
     // The choices and the place's number come from the newest Listing the Host Server pushed.
     onFillPlace: (row) => setFilling(row.id),
     onToggle: toggleOpened,

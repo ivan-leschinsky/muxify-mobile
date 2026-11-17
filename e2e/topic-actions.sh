@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Runs the long-press menu, the trailing swipe, the Move, the Fill of an Open
-# Place and the Settle of the Topic cards on the Host Screen against a sandboxed Muxify on this Mac, the dev
+# Place, the Settle, the Pin and Unpin and the Forget of the Topic cards on the Host Screen against a sandboxed Muxify on this Mac, the dev
 # Host (see e2e/sandbox.sh). After each step it waits until the Mac, asked
 # through the CLI, has the change, and then checks that the Host Screen shows
 # the Mac's order.
@@ -176,7 +176,7 @@ menu() {
   snap
   items=$(python3 - "$SNAPSHOT" <<'PY'
 import json, sys
-words = {"Mark as Read", "Mark as Unread", "Move Up", "Move Down", "Bench", "Make a Guest"}
+words = {"Mark as Read", "Mark as Unread", "Pin", "Unpin", "Move Up", "Move Down", "Bench", "Make a Guest"}
 nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
 print("|".join(n["label"] for n in nodes if n.get("label") in words and "Button" in n.get("type", "") + n.get("role", "")))
 PY
@@ -195,19 +195,19 @@ open_host_screen
 expect "PinA PinB | P1 open B2 | G1 | AG(blocked) P3 B1(unread)"
 
 echo "== Row menu"
-menu B1 "Mark as Read|Move Up|Move Down|Make a Guest" "Mark as Read"
+menu B1 "Mark as Read|Pin|Move Up|Move Down|Make a Guest" "Mark as Read"
 expect "PinA PinB | P1 open B2 | G1 | AG(blocked) P3 B1"
-menu B1 "Mark as Unread|Move Up|Move Down|Make a Guest" "Mark as Unread"
+menu B1 "Mark as Unread|Pin|Move Up|Move Down|Make a Guest" "Mark as Unread"
 expect "PinA PinB | P1 open B2 | G1 | AG(blocked) P3 B1(unread)"
-menu P3 "Mark as Unread|Move Up|Move Down|Make a Guest" "Move Up"
+menu P3 "Mark as Unread|Pin|Move Up|Move Down|Make a Guest" "Move Up"
 expect "PinA PinB | P1 open B2 | G1 | P3 AG(blocked) B1(unread)"
-menu P3 "Mark as Unread|Move Up|Move Down|Make a Guest" "Make a Guest"
+menu P3 "Mark as Unread|Pin|Move Up|Move Down|Make a Guest" "Make a Guest"
 expect "PinA PinB | P1 open B2 | G1 P3 | AG(blocked) B1(unread)"
-menu P3 "Mark as Unread|Move Up|Move Down|Bench" "Bench"
+menu P3 "Mark as Unread|Pin|Move Up|Move Down|Bench" "Bench"
 expect "PinA PinB | P1 open B2 | G1 | P3 AG(blocked) B1(unread)"
-menu AG "Move Up|Move Down|Make a Guest" "Move Down"
+menu AG "Pin|Move Up|Move Down|Make a Guest" "Move Down"
 expect "PinA PinB | P1 open B2 | G1 | P3 B1(unread) AG(blocked)"
-menu PinB "Mark as Unread|Move Up|Move Down" "Move Up"
+menu PinB "Mark as Unread|Unpin|Move Up|Move Down" "Move Up"
 expect "PinB PinA | P1 open B2 | G1 | P3 B1(unread) AG(blocked)"
 
 echo "== Trailing swipe"
@@ -235,7 +235,7 @@ agent-device wait 'label="Mark as Unread B1"' 3000 >/dev/null || fail "no Unread
 # As in Mail, a touch on the row while its buttons show closes them.
 agent-device press 'label="Topic B1"' --settle >/dev/null
 agent-device wait absent 'label="Mark as Unread B1"' 3000 >/dev/null || fail "the swipe of B1 did not close"
-menu B1 "Mark as Unread|Move Up|Move Down|Make a Guest" "Move Up"
+menu B1 "Mark as Unread|Pin|Move Up|Move Down|Make a Guest" "Move Up"
 expect "PinB PinA | P1 open B2 | G1 | B1 P3 AG(blocked)"
 echo "ok: a long-press after a swipe opens the menu"
 
@@ -282,11 +282,11 @@ fill() {
 }
 fill B2
 expect "PinA PinB | G1 B2 B1 | P1 P3 | AG(blocked)"
-menu B1 "Mark as Unread|Move Up|Move Down|Bench" "Bench"
+menu B1 "Mark as Unread|Pin|Move Up|Move Down|Bench" "Bench"
 expect "PinA PinB | G1 B2 open | P1 P3 | B1 AG(blocked)"
 fill P3
 expect "PinA PinB | G1 B2 P3 | P1 | B1 AG(blocked)"
-menu P3 "Mark as Unread|Move Up|Move Down|Bench" "Bench"
+menu P3 "Mark as Unread|Pin|Move Up|Move Down|Bench" "Bench"
 expect "PinA PinB | G1 B2 open | P1 | P3 B1 AG(blocked)"
 reveal "Open Place" || fail "no Open Place to tap"
 agent-device press 'label="Open Place"' --settle >/dev/null || fail "no Open Place to tap"
@@ -333,9 +333,34 @@ muxify topic mark-unread --topic G1 --json >/dev/null || exit 1
 muxify topic mark-read --topic-only --topic G1 --json >/dev/null || exit 1
 open_host_screen G1 AG
 expect "PinA PinB | G1(done) B2 B1 |  | AG(blocked)"
-menu G1 "Mark as Read|Move Up|Move Down|Bench" "Mark as Read"
+menu G1 "Mark as Read|Pin|Move Up|Move Down|Bench" "Mark as Read"
 expect "PinA PinB | G1 B2 B1 |  | AG(blocked)"
 echo "ok: Mark as Read reads the done Agent too"
+
+echo "== Pin and Unpin"
+menu B2 "Mark as Unread|Pin|Move Up|Move Down|Bench" "Pin"
+expect "PinA PinB B2 | G1 open B1 |  | AG(blocked)"
+# An Unpinned Topic goes to the top of the Bench.
+menu B2 "Mark as Unread|Unpin|Move Up|Move Down" "Unpin"
+expect "PinA PinB | G1 open B1 |  | B2 AG(blocked)"
+
+echo "== Forget"
+# Long-presses card $1, picks Forget…, then presses $2 in the alert.
+forget() {
+  reveal "Topic $1" || fail "no card $1"
+  agent-device longpress "label=\"Topic $1\"" 1000 --settle >/dev/null
+  agent-device press 'role=button label="Forget…"' --settle >/dev/null || fail "no Forget… in the menu of $1"
+  agent-device press "role=button label=\"$2\"" --settle >/dev/null || fail "no $2 in the Forget alert of $1"
+}
+forget G1 "Forget"
+expect "PinA PinB | open open B1 |  | B2 AG(blocked)"
+[ "$(sessions_of G1)" -gt 0 ] || fail "Forget stopped the Sessions of G1"
+muxify topic list --json | grep -q '"G1"' && fail "the Mac still has G1"
+echo "ok: Forget keeps the Sessions"
+forget B2 "Forget and Stop Sessions"
+expect "PinA PinB | open open B1 |  | AG(blocked)"
+[ "$(sessions_of B2)" -eq 0 ] || fail "Forget and Stop Sessions left a Session of B2"
+echo "ok: Forget and Stop Sessions stops them"
 
 agent-device close >/dev/null 2>&1
 echo "PASS"

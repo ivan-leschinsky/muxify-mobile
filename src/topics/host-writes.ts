@@ -36,13 +36,25 @@ export function changeCommand(change: TopicChange): EnvironmentCommand {
   }
 }
 
-type SettleAction = Extract<TopicAction, 'settle' | 'settle-stopping-sessions'>;
+/** The menu orders that close a Topic with the Sessions `topic_choices` offers. */
+export type ClosingAction = Extract<TopicAction, 'settle' | 'settle-stopping-sessions' | 'forget' | 'forget-stopping-sessions'>;
+
+const CLOSING: Record<ClosingAction, { close: 'settle' | 'forget'; stopSessions: boolean }> = {
+  settle: { close: 'settle', stopSessions: false },
+  'settle-stopping-sessions': { close: 'settle', stopSessions: true },
+  forget: { close: 'forget', stopSessions: false },
+  'forget-stopping-sessions': { close: 'forget', stopSessions: true },
+};
+
+export function isClosing(action: TopicAction): action is ClosingAction {
+  return action in CLOSING;
+}
 
 /**
  * The command of a menu order that needs nothing from the Host first. Mark as
  * Read reads the whole Topic; Mark as Unread changes only its Topic mark.
  */
-export function actionCommand(action: Exclude<TopicAction, SettleAction>): EnvironmentCommand {
+export function actionCommand(action: Exclude<TopicAction, ClosingAction>): EnvironmentCommand {
   switch (action) {
     case 'mark-read':
       return { mark_read: { change: 'read', scope: 'topic' } };
@@ -56,6 +68,10 @@ export function actionCommand(action: Exclude<TopicAction, SettleAction>): Envir
       return { bench_topic: {} };
     case 'make-guest':
       return { make_guest: {} };
+    case 'pin':
+      return { pin: {} };
+    case 'unpin':
+      return { unpin: {} };
   }
 }
 
@@ -65,11 +81,32 @@ export function actionCommand(action: Exclude<TopicAction, SettleAction>): Envir
  * without `--remove-worktrees` does.
  */
 export function settleCommand(choices: readonly object[], stopSessions: boolean): EnvironmentCommand {
-  return {
-    settle: {
-      choices: choices.map((choice) => ({ ...choice, disposition: stopSessions ? 'kill' : 'keep', remove_worktree: false })),
-    },
-  };
+  return { settle: { choices: disposed(choices, stopSessions) } };
+}
+
+/**
+ * `forget` with the Sessions that `topic_choices` offered for it, kept or
+ * stopped as in Settle. No Worktree is removed, as the Host CLI's Forget
+ * without `--remove-worktrees` does.
+ */
+export function forgetCommand(choices: readonly object[], stopSessions: boolean): EnvironmentCommand {
+  return { forget: { choices: disposed(choices, stopSessions), worktrees: [] } };
+}
+
+function disposed(choices: readonly object[], stopSessions: boolean): object[] {
+  return choices.map((choice) => ({ ...choice, disposition: stopSessions ? 'kill' : 'keep', remove_worktree: false }));
+}
+
+/** The command of Settle or Forget, with the Sessions the Host offers for it now. */
+export async function closingCommand(
+  host: Host,
+  topic: TopicId,
+  action: ClosingAction,
+  connections: ServerConnections = appConnections(),
+): Promise<EnvironmentCommand> {
+  const { close, stopSessions } = CLOSING[action];
+  const choices = await topicChoices(host, topic, close, connections);
+  return close === 'settle' ? settleCommand(choices, stopSessions) : forgetCommand(choices, stopSessions);
 }
 
 /** `move_card` next to or in trade with a card, or `fill_open_place`. */
@@ -177,12 +214,17 @@ export async function writeTopic(
 }
 
 /**
- * The Sessions that Settle offers for the Topic, as the Host reads them now:
- * `topic_choices`. It changes nothing.
+ * The Sessions that Settle or Forget offers for the Topic, as the Host reads
+ * them now: `topic_choices`. It changes nothing.
  */
-export async function settleChoices(host: Host, topic: TopicId, connections: ServerConnections = appConnections()): Promise<object[]> {
+export async function topicChoices(
+  host: Host,
+  topic: TopicId,
+  action: 'settle' | 'forget',
+  connections: ServerConnections = appConnections(),
+): Promise<object[]> {
   const answer = await connections.onServer(host, (server) =>
-    server.request({ topic_choices: { action: 'settle', target: { topic: { id: topic } } } }));
+    server.request({ topic_choices: { action, target: { topic: { id: topic } } } }));
   return array(object(answer, 'topic choices').sessions, 'sessions').map((session, index) => object(session, `sessions[${index}]`));
 }
 

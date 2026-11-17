@@ -4,7 +4,7 @@ import type { Host } from '@/storage/records';
 
 import type { TopicId } from './environment';
 import type { EnvironmentCommand } from './host-write-request';
-import { actionCommand, dropCommand, settleChoices, settleCommand, wakeCommand, writeTopic } from './host-writes';
+import { actionCommand, closingCommand, dropCommand, isClosing, wakeCommand, writeTopic } from './host-writes';
 import { newRequestId } from './request';
 import { TOPIC_ACTION_LABEL, type TopicAction } from './topic-action';
 import { DROP_LABEL, type Drop } from './topic-drop';
@@ -38,8 +38,8 @@ export function orderLabel(order: TopicOrder): string {
  * caller knows whether the order had left the phone: `sending` is called just
  * before it does. Each call is one tap, so each has its own Request id.
  *
- * Settle first asks the Host which Sessions it offers, as the Host CLI's
- * `topic settle` does, and keeps them or stops them all.
+ * Settle and Forget first ask the Host which Sessions they offer, as the Host
+ * CLI's `topic settle` and `topic forget` do, and keep them or stop them all.
  */
 export async function sendTopicOrder(host: Host, topicId: TopicId, order: TopicOrder, sending: () => void): Promise<TopicWrite> {
   const label = orderLabel(order);
@@ -57,10 +57,7 @@ export async function sendTopicOrder(host: Host, topicId: TopicId, order: TopicO
 async function orderCommand(host: Host, topicId: TopicId, order: TopicOrder): Promise<EnvironmentCommand> {
   switch (order.kind) {
     case 'action':
-      if (order.action === 'settle' || order.action === 'settle-stopping-sessions') {
-        return settleCommand(await settleChoices(host, topicId), order.action === 'settle-stopping-sessions');
-      }
-      return actionCommand(order.action);
+      return isClosing(order.action) ? closingCommand(host, topicId, order.action) : actionCommand(order.action);
     case 'drop':
       return dropCommand(order.drop);
     case 'wake':

@@ -11,6 +11,9 @@ import type { Mark } from './environment';
  * Mark as Read reads the whole Topic, as the Mac's Mark Read does: the Topic
  * mark and the Unread mark of each Agent in its Sessions. Mark as Unread
  * changes the Topic mark only, so the phone never makes an Agent Unread.
+ *
+ * Settle and Forget close the Topic with the Sessions the Host offers: each
+ * kept with no Topic, or each stopped. Its Worktrees stay.
  */
 export type TopicAction =
   | 'mark-read'
@@ -19,8 +22,12 @@ export type TopicAction =
   | 'move-down'
   | 'bench'
   | 'make-guest'
+  | 'pin'
+  | 'unpin'
   | 'settle'
-  | 'settle-stopping-sessions';
+  | 'settle-stopping-sessions'
+  | 'forget'
+  | 'forget-stopping-sessions';
 
 /** The subcommand of one action, before the `--topic` that names the Topic. */
 export function topicActionCommand(action: TopicAction): string {
@@ -37,10 +44,18 @@ export function topicActionCommand(action: TopicAction): string {
       return 'topic bench';
     case 'make-guest':
       return 'topic make-guest';
+    case 'pin':
+      return 'topic pin';
+    case 'unpin':
+      return 'topic unpin';
     case 'settle':
       return 'topic settle';
     case 'settle-stopping-sessions':
       return 'topic settle --kill-sessions';
+    case 'forget':
+      return 'topic forget';
+    case 'forget-stopping-sessions':
+      return 'topic forget --kill-sessions';
   }
 }
 
@@ -52,8 +67,12 @@ export const TOPIC_ACTION_LABEL: Record<TopicAction, string> = {
   'move-down': 'Move Down',
   bench: 'Bench',
   'make-guest': 'Make a Guest',
+  pin: 'Pin',
+  unpin: 'Unpin',
   settle: 'Settle',
   'settle-stopping-sessions': 'Settle and Stop Sessions',
+  forget: 'Forget',
+  'forget-stopping-sessions': 'Forget and Stop Sessions',
 };
 
 /** SF Symbol of each action in the menu. */
@@ -64,9 +83,39 @@ export const TOPIC_ACTION_ICON: Record<TopicAction, SFSymbol> = {
   'move-down': 'arrow.down',
   bench: 'tray.and.arrow.down',
   'make-guest': 'person.badge.plus',
+  pin: 'pin',
+  unpin: 'pin.slash',
   settle: 'checkmark.circle',
   'settle-stopping-sessions': 'stop.circle',
+  forget: 'trash',
+  'forget-stopping-sessions': 'stop.circle',
 };
+
+/**
+ * The confirm alert of Settle… and Forget… in a card's menu: the order that
+ * keeps the Topic's Sessions running and the one that stops them. Either way
+ * the Worktrees stay.
+ */
+export function closeAlert(close: 'settle' | 'forget', topic: string): {
+  title: string;
+  message: string;
+  keep: Extract<TopicAction, 'settle' | 'forget'>;
+  stop: Extract<TopicAction, 'settle-stopping-sessions' | 'forget-stopping-sessions'>;
+} {
+  return close === 'settle'
+    ? {
+        title: `Settle ${topic}?`,
+        message: 'Settle keeps its Sessions running. Its Worktrees stay in both cases.',
+        keep: 'settle',
+        stop: 'settle-stopping-sessions',
+      }
+    : {
+        title: `Forget ${topic}?`,
+        message: 'Forget removes the Topic for good and keeps its Sessions running. Its Worktrees stay in both cases.',
+        keep: 'forget',
+        stop: 'forget-stopping-sessions',
+      };
+}
 
 /** The section of the Host Screen that a Topic card sits in. */
 export type CardSection = 'pinned' | 'in-play' | 'guests' | 'bench';
@@ -76,12 +125,14 @@ export type CardSection = 'pinned' | 'in-play' | 'guests' | 'bench';
  * `WorkspaceStore.canBench` and `guestState` say. A Pinned card is never
  * Benched or made a Guest. A Benched card becomes a Guest. A card in a place
  * or among the Guests goes to the Bench. Move Up and Move Down are always offered: the Mac decides at the
- * edges, and a refusal shows its reason.
+ * edges, and a refusal shows its reason. A Pinned card offers Unpin, any other
+ * Pin, as the Mac's `pinButton` does.
  */
 export function menuActions(card: { section: CardSection; mark: Mark | null }): TopicAction[] {
   const actions: TopicAction[] = [];
   const read = readAction(card.mark);
   if (read !== null) actions.push(read);
+  actions.push(card.section === 'pinned' ? 'unpin' : 'pin');
   actions.push('move-up', 'move-down');
   if (card.section === 'bench') actions.push('make-guest');
   if (card.section === 'in-play' || card.section === 'guests') actions.push('bench');

@@ -116,6 +116,8 @@ describe('the orders of a Topic card', () => {
     [{ kind: 'action', action: 'move-down' }, { move_card: { move: { down: {} } } }],
     [{ kind: 'action', action: 'bench' }, { bench_topic: {} }],
     [{ kind: 'action', action: 'make-guest' }, { make_guest: {} }],
+    [{ kind: 'action', action: 'pin' }, { pin: {} }],
+    [{ kind: 'action', action: 'unpin' }, { unpin: {} }],
     [
       { kind: 'drop', drop: { kind: 'place', side: 'before', anchor: { kind: 'topic', id: 't2' as TopicId } } },
       { move_card: { move: { before: { card: { topic: { ref: { id: 't2' } } } } } } },
@@ -153,6 +155,24 @@ describe('the orders of a Topic card', () => {
     expect(mockServer.writes()).toEqual([{
       version: 2,
       command: { settle: { choices: [{ ...offered, disposition, remove_worktree: false }] } },
+      target: { topic: { id: 't1' } },
+      request: expect.any(String),
+    }]);
+  });
+
+  it.each([
+    ['forget', 'keep'],
+    ['forget-stopping-sessions', 'kill'],
+  ] as const)('%s asks the Host which Sessions Forget offers, then keeps or stops each, and removes no Worktree: %s', async (action, disposition) => {
+    const offered = { id: '$1', name: 'api/fix', disposition: 'keep', worktree: { repository_path: '/r', path: '/w', branch: 'b' }, remove_worktree: false };
+    mockServer.answer = (payload) => ('topic_choices' in payload ? { sessions: [offered] } : { changed: { topic_id: 't1' } });
+
+    await expect(sendTopicOrder(HOST, TOPIC, { kind: 'action', action }, () => {})).resolves.toEqual({ kind: 'changed' });
+
+    expect(mockServer.requests[0]).toEqual({ topic_choices: { action: 'forget', target: { topic: { id: 't1' } } } });
+    expect(mockServer.writes()).toEqual([{
+      version: 2,
+      command: { forget: { choices: [{ ...offered, disposition, remove_worktree: false }], worktrees: [] } },
       target: { topic: { id: 't1' } },
       request: expect.any(String),
     }]);

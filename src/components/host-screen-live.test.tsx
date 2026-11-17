@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert, type AlertButton } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, Picker } from '@expo/ui/swift-ui';
 
@@ -225,6 +226,37 @@ describe('a live Host Screen', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("offers Pin, Unpin and Forget in a card's menu, sends each as a card write, and shows the pushed result", async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const server = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    await mount();
+    await server.push(snapshotItem('Ship', 'Docs'));
+    expect(labels()).toEqual(expect.arrayContaining(['Pin', 'Settle…', 'Forget…']));
+    expect(labels()).not.toContain('Unpin');
+
+    await act(async () => { button('Pin').props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'pin' }, expect.any(Function));
+    const pinned = snapshotItem('Ship', 'Docs');
+    const [ship, ...rest] = pinned.unpinned.places;
+    await server.push({ ...pinned, pinned: [ship], unpinned: { ...pinned.unpinned, places: rest } });
+    expect(labels()).toEqual(expect.arrayContaining(['Unpin', 'Pin']));
+
+    await act(async () => { button('Unpin').props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'unpin' }, expect.any(Function));
+
+    await act(async () => { button('Forget…').props.onPress(); });
+    const [title, message, buttons] = alert.mock.calls[0]!;
+    expect(title).toBe('Forget Ship?');
+    expect(message).toContain('Its Worktrees stay in both cases.');
+    expect((buttons as AlertButton[]).map((choice) => choice.text)).toEqual(['Forget', 'Forget and Stop Sessions', 'Cancel']);
+    await act(async () => { (buttons as AlertButton[])[1]!.onPress!(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'forget-stopping-sessions' }, expect.any(Function));
+
+    await server.push(snapshotItem('Docs'));
+    expect(topics()).toEqual(['Topic Docs']);
+  });
+
   it('keeps the last Listing on screen, with no spinner, while a new Connection waits for its first push', async () => {
     const first = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
     await mount();
@@ -251,6 +283,7 @@ describe('Sessions only', () => {
     expect(read).toHaveBeenCalledTimes(1);
     expect(texts()).toContain('Topics are unavailable on Dev Host: the Host Server did not answer');
     expect(labels()).toEqual(['Session api']);
+    expect(labels().filter((label) => ['Pin', 'Unpin', 'Forget…'].includes(label))).toEqual([]);
     expect(renderer.root.findAllByType(Picker)).toEqual([]);
     expect(searchBar(renderer)).toBeUndefined();
     expect([...toolbarMenuActions(renderer).keys()]).toEqual(['New Session', 'Configure chooser']);

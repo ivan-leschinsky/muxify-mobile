@@ -508,6 +508,10 @@ describe('sending a menu order for a Topic', () => {
     ['make-guest', ['topic', 'make-guest']],
     ['settle', ['topic', 'settle']],
     ['settle-stopping-sessions', ['topic', 'settle', '--kill-sessions']],
+    ['pin', ['topic', 'pin']],
+    ['unpin', ['topic', 'unpin']],
+    ['forget', ['topic', 'forget']],
+    ['forget-stopping-sessions', ['topic', 'forget', '--kill-sessions']],
   ])('%s sends exactly its command with the Topic id and --json', async (action, command) => {
     const host = scriptedHost(CHANGED);
 
