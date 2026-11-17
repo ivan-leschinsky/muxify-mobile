@@ -39,9 +39,9 @@ export interface MuxifyPath {
    */
   locate(exec: Exec): Promise<string | null>;
   /**
-   * Forgets the path, so the next call probes again. The registry calls it
-   * when the Host CLI install answers `installed` or `updated`, which puts a
-   * new one in `~/.local/bin`.
+   * Forgets the path, so the next call probes again. The Host Server link
+   * calls it when the Host CLI install answers `installed` or `updated`, which
+   * puts a new one in `~/.local/bin`.
    */
   forget(): void;
 }

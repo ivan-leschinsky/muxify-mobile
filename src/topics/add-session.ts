@@ -1,5 +1,3 @@
-import { shellQuote } from '@/tmux/commands';
-
 import type { EnvironmentSnapshot, TopicId } from './environment';
 import { object, string } from './json-shape';
 import type { UnknownOutcome } from './request';
@@ -13,8 +11,8 @@ import type { SessionPathChoice } from './session-paths';
 export type AddSessionRead = { kind: 'added'; session: string } | { kind: 'failed'; error: string } | UnknownOutcome;
 
 /**
- * The name to send as `topic add-session --name` for a Session at `folder`,
- * which the Host makes `<name>/<slug of the Topic>`. With `--name` the Host
+ * The name to send as `add_session`'s `chosen_name` for a Session at `folder`,
+ * which the Host makes `<name>/<slug of the Topic>`. With `chosen_name` the Host
  * finds a live Session of the Topic that has the name and makes nothing, so
  * the name must be one that no Session of the Topic has. The rule is the
  * Host's own `SessionNaming.available`: the name of the folder's Session Path,
@@ -58,18 +56,4 @@ function withoutSlug(sessionName: string): string {
 export function parseAddedSession(json: unknown): string {
   const changed = object(object(json, 'answer').changed, 'changed');
   return string(changed.session_name, 'changed.session_name');
-}
-
-/**
- * The folder as one shell word. `muxify` does not expand `~`, and a quoted `~`
- * does not reach the shell's own expansion, so a leading `~` becomes `"$HOME"`.
- * The rest is quoted as is.
- */
-export function folderArgument(folder: string): string {
-  if (folder === '~') return '"$HOME"';
-  if (folder.startsWith('~/')) {
-    const rest = folder.slice(2);
-    return rest === '' ? '"$HOME"/' : `"$HOME"/${shellQuote(rest)}`;
-  }
-  return shellQuote(folder);
 }

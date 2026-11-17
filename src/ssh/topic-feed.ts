@@ -1,5 +1,6 @@
 import { describeError } from '@/lib/describe-error';
 import type { TopicId } from '@/topics/environment';
+import { topicsUnavailable } from '@/topics/host-topics';
 import { parseTopicDetail, TOPIC_GONE, type TopicRead } from '@/topics/topic-detail';
 
 import { HostServerError, type HostServer, type HostServerCall } from './host-server';
@@ -48,7 +49,7 @@ export function followTopic(
         const state = server.state();
         if (state.kind === 'closed') return;
         if (state.kind === 'sessions-only') {
-          onRead({ kind: 'failed', error: `Topics are unavailable on this Host: ${state.reason}` });
+          onRead({ kind: 'failed', error: topicsUnavailable('this Host', state.reason) });
           return;
         }
         const stopped = error instanceof HostServerError && error.code === 'unavailable';

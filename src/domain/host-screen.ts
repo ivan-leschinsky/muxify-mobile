@@ -1,6 +1,6 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
-import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
+import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 import type { SessionOnHost } from '@/topics/tmux-order';
@@ -208,7 +208,7 @@ function topicsNotice(topics: HostTopics): HostScreenRow[] {
     case 'failed':
       return [{ kind: 'refused', message: topics.error }];
     case 'unavailable':
-      return [{ kind: 'note', text: `Topics are unavailable on ${topics.host}: ${topics.reason}` }];
+      return [{ kind: 'note', text: topicsUnavailable(topics.host, topics.reason) }];
     case 'absent':
     case 'loading':
     case 'listed':

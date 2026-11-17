@@ -29,36 +29,6 @@ export type TopicAction =
   | 'forget'
   | 'forget-stopping-sessions';
 
-/** The subcommand of one action, before the `--topic` that names the Topic. */
-export function topicActionCommand(action: TopicAction): string {
-  switch (action) {
-    case 'mark-read':
-      return 'topic mark-read';
-    case 'mark-unread':
-      return 'topic mark-unread --topic-only';
-    case 'move-up':
-      return 'topic move up';
-    case 'move-down':
-      return 'topic move down';
-    case 'bench':
-      return 'topic bench';
-    case 'make-guest':
-      return 'topic make-guest';
-    case 'pin':
-      return 'topic pin';
-    case 'unpin':
-      return 'topic unpin';
-    case 'settle':
-      return 'topic settle';
-    case 'settle-stopping-sessions':
-      return 'topic settle --kill-sessions';
-    case 'forget':
-      return 'topic forget';
-    case 'forget-stopping-sessions':
-      return 'topic forget --kill-sessions';
-  }
-}
-
 /** The Mac's words for each action. */
 export const TOPIC_ACTION_LABEL: Record<TopicAction, string> = {
   'mark-read': 'Mark as Read',

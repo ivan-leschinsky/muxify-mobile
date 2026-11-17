@@ -35,7 +35,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
             ...request,
             store: deviceHostStore(),
             followTopic: followHostTopic,
-            markTopicRead: (hostId, topicId) => markTopicRead(hostId, topicId),
+            markTopicRead,
             openConnection: appConnections().openConnection,
             log: deviceLog(),
           }),

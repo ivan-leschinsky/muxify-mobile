@@ -6,6 +6,7 @@ import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 
 import type { TopicId } from './environment';
+import { topicsUnavailable } from './host-topics';
 import { pushedTopic } from './host-writes';
 import type { TopicRead } from './topic-detail';
 
@@ -41,7 +42,7 @@ export async function readTopic(hostId: string, topicId: TopicId): Promise<Topic
 export function followHostTopic(hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void): () => void {
   const server = appConnections().hostServer(hostId);
   if (!server) {
-    onRead({ kind: 'failed', error: 'Topics are unavailable on this Host: no Host Server runs on its Connection.' });
+    onRead({ kind: 'failed', error: topicsUnavailable('this Host', 'no Host Server runs on its Connection.') });
     return () => {};
   }
   return followTopic(server, topicId, onRead, (line) => say(`Host Server: ${line}`));

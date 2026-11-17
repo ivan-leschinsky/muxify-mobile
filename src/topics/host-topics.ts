@@ -33,6 +33,11 @@ export type HostTopics =
    */
   | { kind: 'unavailable'; host: string; reason: string };
 
+/** Why a Host shows no Topics, in the Mac's words: "Topics are unavailable on <host>: <reason>". */
+export function topicsUnavailable(host: string, reason: string): string {
+  return `Topics are unavailable on ${host}: ${reason}`;
+}
+
 /** Before the Host has been asked anything. */
 export const TOPICS_UNASKED: HostTopics = { kind: 'loading', last: null };
 

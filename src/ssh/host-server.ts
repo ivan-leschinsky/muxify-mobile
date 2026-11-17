@@ -101,7 +101,6 @@ interface Queued {
   resolve(value: unknown): void;
   reject(error: unknown): void;
   forwarded?: HostServerCall<unknown>;
-  cancelled: boolean;
 }
 
 /**
@@ -251,7 +250,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
   function enqueue(payload: object, onItem?: (item: unknown) => void): HostServerCall<unknown> {
     let entry!: Queued;
     const promise = new Promise<unknown>((resolve, reject) => {
-      entry = { payload, onItem, resolve, reject, cancelled: false };
+      entry = { payload, onItem, resolve, reject };
     });
     if (current.kind === 'sessions-only' || current.kind === 'closed') entry.reject(channelEnded());
     else if (current.kind === 'live' && session) forward(entry, session);

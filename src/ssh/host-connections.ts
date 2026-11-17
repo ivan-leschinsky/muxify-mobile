@@ -15,6 +15,7 @@ import {
   type HostCliState,
   type OpenCommandChannel,
 } from '@/topics/host-cli-install';
+import { topicsUnavailable } from '@/topics/host-topics';
 import { createMuxifyPath, type MuxifyPath } from '@/topics/muxify-path';
 import { WriteOutcomeUnknown } from '@/topics/request';
 
@@ -199,7 +200,7 @@ export function createHostConnections(options: {
     self = entry;
     entry.dialed.then(
       (opened) => {
-        // A changed Host key waits for a screen to accept it: see attempt().
+        // A changed Host key waits for a screen to accept it: see acquireForScreen().
         if (opened.verdict.kind !== 'changed') begin(entry, opened);
       },
       () => {
@@ -320,6 +321,17 @@ export function createHostConnections(options: {
     throw Object.assign(new Error('The Host key was rejected.'), { code: 'HOST_KEY_REJECTED' });
   }
 
+  /**
+   * The Host's Connection for a screen: its Host key checked first, and only
+   * then its Host Server and the Host CLI install started on it.
+   */
+  async function acquireForScreen(host: Host, options: ScreenOptions | undefined): Promise<{ entry: Entry; dialed: Dialed }> {
+    const { entry, dialed } = await acquire(host);
+    checkHostKey(entry, dialed, options);
+    begin(entry, dialed);
+    return { entry, dialed };
+  }
+
   function suspect(entry: Entry): void {
     if (entry.attaches > 0) {
       say(`${entry.host.displayName}: an exec passed its deadline; asking the Attach`);
@@ -358,9 +370,7 @@ export function createHostConnections(options: {
     work: ScreenUse<T>,
     options: ScreenOptions | undefined,
   ): Promise<{ value: T } | { error: unknown; failedByConnection: boolean }> {
-    const { entry, dialed } = await acquire(host);
-    checkHostKey(entry, dialed, options);
-    begin(entry, dialed);
+    const { entry, dialed } = await acquireForScreen(host, options);
     entry.uses += 1;
     busy(entry);
     try {
@@ -443,13 +453,11 @@ export function createHostConnections(options: {
     hostServer: (hostId) => entries.get(hostId)?.server ?? null,
 
     async onServer(host, work, options) {
-      const { entry, dialed } = await acquire(host);
-      checkHostKey(entry, dialed, options);
-      begin(entry, dialed);
+      const { entry } = await acquireForScreen(host, options);
       const { server } = entry;
-      if (!server) throw new Error(`Topics are unavailable on ${host.displayName}: its Connection runs no Host Server.`);
+      if (!server) throw new Error(topicsUnavailable(host.displayName, 'its Connection runs no Host Server.'));
       const state = server.state();
-      if (state.kind === 'sessions-only') throw new Error(`Topics are unavailable on ${host.displayName}: ${state.reason}.`);
+      if (state.kind === 'sessions-only') throw new Error(`${topicsUnavailable(host.displayName, state.reason)}.`);
       entry.uses += 1;
       busy(entry);
       try {
@@ -470,9 +478,7 @@ export function createHostConnections(options: {
     },
 
     async hold(host, options) {
-      const { entry, dialed } = await acquire(host);
-      checkHostKey(entry, dialed, options);
-      begin(entry, dialed);
+      const { entry } = await acquireForScreen(host, options);
       entry.uses += 1;
       busy(entry);
       let released = false;
