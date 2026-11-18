@@ -18,8 +18,10 @@
 #      Screen, and the Topic opened again is on that Window, with no page
 #   6  a Tab that the Host lists no more leaves the reopened Topic on its Pane
 #
-# The sandbox's `muxify` is a stub for `browser` (see e2e/sandbox.sh): the Tabs
-# are a fixture, and no step talks to the Muxify app on this Mac. The page is
+# The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
+# stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
+# the sandbox's real `muxify server`: no step talks to the Muxify app on this
+# Mac. A stored Tab has no title yet, so its row is its address. The page is
 # served at this Mac's Tailscale address, as in e2e/browser-tabs.sh.
 #
 # Requires a configured .env.local, a booted simulator and Tailscale up on this Mac.
@@ -55,19 +57,21 @@ add_session() {
     | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["session_name"])'
 }
 
-# The Tabs the Host lists for every Window: the page, or none of it.
+# The Tabs stored for every Window on the Host: the page and a public site, or
+# the public site only.
 tabs() {
-  python3 - "$ROOT/browser-tabs.json" "$1" <<'PY'
-import json, sys
-path, url = sys.argv[1:3]
-tabs = [{"active": False, "id": "11111111-1111-1111-1111-111111111111", "title": "Public page", "url": "https://example.com/"}]
-if url:
-    tabs.insert(0, {"active": True, "id": "22222222-2222-2222-2222-222222222222", "title": "Place page", "url": url})
-json.dump(tabs, open(path, "w"))
-PY
+  for window in $(on_host "tmux list-windows -a -F '#{window_id}'"); do
+    if [ -n "$1" ]; then
+      stored-tabs "$window" 0 "$1" https://example.com/
+    else
+      stored-tabs "$window" 0 https://example.com/
+    fi || fail "could not store the Tabs of $window"
+  done
 }
 
 open_title_sheet() {
+  # A press within about a second of a push or a pop can be lost.
+  sleep 1.5
   agent-device press "id=\"$1\"" >/dev/null 2>&1
   agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened from $1"
   # A press on a sheet that still moves lands nowhere.
@@ -108,7 +112,6 @@ python3 -m http.server "$PORT" --bind "$ADDRESS" --directory "$ROOT/www" >/dev/n
 SERVER=$!
 for _ in $(seq 50); do curl -s -o /dev/null "$URL" && break; sleep 0.1; done
 curl -s -o /dev/null "$URL" || fail "the page is not up at the Tailscale address"
-tabs "$URL"
 
 python3 - "$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-settings.json" <<'PY'
 import json, sys
@@ -127,6 +130,7 @@ muxify topic pin --topic "$OTHER_ID" --json >/dev/null || fail "could not pin $O
 muxify topic pin --topic "$TOPIC_ID" --json >/dev/null || fail "could not pin $TOPIC"
 on_host "tmux new-window -d -t '$TOPIC_SESSION:' -n second" || fail "could not add a Window to $TOPIC_SESSION"
 on_host "tmux select-window -t '$TOPIC_SESSION:0'"
+tabs "$URL"
 
 agent-device close >/dev/null 2>&1
 agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
@@ -136,8 +140,8 @@ agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
 echo "1/6  a Tab of the Topic's Window opens in the Web View"
 open_topic "$TOPIC"
 open_title_sheet header-title
-agent-device wait 'label="Tab Place page"' 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab"
-agent-device press 'label="Tab Place page"' >/dev/null 2>&1
+agent-device wait "label=\"Tab $URL\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab"
+agent-device press "label=\"Tab $URL\"" >/dev/null 2>&1
 page_on_top "the Web View did not show the page"
 agent-device is text 'id="topic-title"' "$TOPIC" >/dev/null 2>&1 || fail "the Web View's title is not the Topic's"
 echo "     the page, under the Topic's title"
@@ -188,19 +192,14 @@ echo "     the terminal in Window 1, and no page"
 
 echo "6/6  a Tab the Host lists no more leaves the Topic on its Pane"
 open_title_sheet header-title
-agent-device wait 'label="Tab Place page"' 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab again"
-agent-device press 'label="Tab Place page"' >/dev/null 2>&1
+agent-device wait "label=\"Tab $URL\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab again"
+agent-device press "label=\"Tab $URL\"" >/dev/null 2>&1
 page_on_top "the Web View did not show the page again"
 tabs ""
-CALLS=$(wc -l <"$ROOT/browser-calls")
 back_to_host
 open_topic "$TOPIC"
-for _ in $(seq 50); do
-  [ "$(wc -l <"$ROOT/browser-calls")" -gt "$CALLS" ] && break
-  sleep 0.2
-done
-[ "$(wc -l <"$ROOT/browser-calls")" -gt "$CALLS" ] || fail "the reopened Topic did not read its Window's Tabs"
-sleep 3
+# The restore reads the Window's Tabs once; the Web View would be up by now.
+sleep 4
 agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View opened a Tab the Host lists no more"
 agent-device is text 'id="topic-title"' "$TOPIC" >/dev/null 2>&1 || fail "the Terminal Screen is not on $TOPIC"
 echo "     the Pane, and no Web View"

@@ -27,13 +27,14 @@ import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
 import type { TopicId } from '@/topics/environment';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
 import { topicSeedFromParam } from '@/topics/topic-detail';
 import { freeSessionName } from '@/topics/add-session';
-import { intentAfter, intentFor, REQUEST_CAPABILITY, type Intent } from '@/topics/request';
+import { topicSessionPaths } from '@/topics/host-session-paths';
+import { addSession, pushedListing, pushedTopic } from '@/topics/host-writes';
+import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { sessionPathSections, type SessionPathsRead } from '@/topics/session-paths';
 
 const say = speakingAs(deviceLog(), 'add-session');
@@ -68,7 +69,7 @@ export default function TopicAddSessionScreen() {
   const choosing = !locked && made === null;
   // The Request of the last Create and open, and the Session name picked for
   // it, so a second try at the same folder finds the Session of the first.
-  const sent = useRef<{ intent: Intent; name: string | undefined } | null>(null);
+  const sent = useRef<{ intent: Intent; name: string } | null>(null);
   const sections = paths.kind === 'listed' ? sessionPathSections(paths.choices, query) : [];
   const choose = (directory: string) => { if (!closed.current && madeRef.current === null) setSelectedFolder(directory); };
 
@@ -79,9 +80,8 @@ export default function TopicAddSessionScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) =>
-        muxify.sessionPaths((command) => transport.exec(command), topicId as TopicId));
-      if (settled()) setPaths(result);
+      const choices = await topicSessionPaths(host, topicId as TopicId);
+      if (settled()) setPaths({ kind: 'listed', choices });
     })().catch((caught) => {
       if (settled()) setPaths({ kind: 'failed', error: describeConnectionFailure(caught) });
     });
@@ -107,18 +107,22 @@ export default function TopicAddSessionScreen() {
     setFolderError(undefined);
     void send(async ({ host, step, refuse, unsure }) => {
       const intent = intentFor(sent.current?.intent ?? null, wanted);
+      const choices = paths.kind === 'listed' ? paths.choices : [];
       if (sent.current?.intent !== intent) {
-        const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-        const name = read.kind === 'listed' && read.snapshot.capabilities.includes(REQUEST_CAPABILITY)
-          ? freeSessionName(wanted, paths.kind === 'listed' ? paths.choices : [], read.snapshot, topicId as TopicId)
-          : undefined;
+        // The Session's name in the Topic, as the Listing the Host Server pushes has it, so a second send finds it.
+        const name = freeSessionName(wanted, choices, await pushedListing(host), topicId as TopicId);
         sent.current = { intent, name };
       }
       const { name } = sent.current!;
-      const added = await appConnections().write(host, (transport, muxify) => {
-        step('sending');
-        return muxify.addSession((command) => transport.exec(command), topicId as TopicId, wanted, intent.request, name);
-      });
+      const row = choices.find((choice) => choice.directory === wanted);
+      const added = await addSession(
+        host,
+        topicId as TopicId,
+        { directory: wanted, worktree: row?.worktree ?? null, name: row?.name },
+        { chosenName: name },
+        intent.request,
+        () => step('sending'),
+      );
       if (intentAfter(intent, added) === null) sent.current = null;
       if (added.kind === 'failed') {
         say(`${host.displayName} made no Session: ${added.error}`);
@@ -144,12 +148,10 @@ export default function TopicAddSessionScreen() {
   // A new Session is one the Topic did not have when the sheet opened.
   const checkMade = () => {
     void check(async ({ host, step, refuse }) => {
-      const read = await appConnections().read(host, (transport, muxify) =>
-        muxify.show((command) => transport.exec(command), topicId as TopicId));
-      if (read.kind === 'failed') throw new Error(read.error);
+      const topic = await pushedTopic(host, topicId as TopicId);
       const before = new Set(seed?.sessions.map((session) => session.id));
-      const added = read.topic.sessions.find((session) => !before.has(session.id));
-      if (!added) return refuse(`${read.topic.label} has no new Session on ${host.displayName}. Create and open sends it again.`);
+      const added = topic.sessions.find((session) => !before.has(session.id));
+      if (!added) return refuse(`${topic.label} has no new Session on ${host.displayName}. Create and open sends it again.`);
       return attach(added.name, step);
     }).then(opened);
   };
@@ -203,14 +205,14 @@ export default function TopicAddSessionScreen() {
             <Text>{`Selected folder: ${selectedFolder}`}</Text>
           </Section>}
           <Section
-            header={<SectionHeader palette={palette}>{paths.kind === 'old' ? 'Folder on the Host' : 'Search or enter a folder'}</SectionHeader>}
+            header={<SectionHeader palette={palette}>Search or enter a folder</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <TextField
               text={folder}
               onTextChange={(value) => { setQuery(value); setSelectedFolder(null); }}
-              placeholder={paths.kind === 'old' ? '~/Dev/project' : 'Search folders or type a path'}
+              placeholder="Search folders or type a path"
               modifiers={[
-                accessibilityLabel(paths.kind === 'old' ? 'Folder' : 'Search folders'),
+                accessibilityLabel('Search folders'),
                 textInputAutocapitalization('never'),
                 autocorrectionDisabled(),
                 disabled(!choosing),
@@ -242,7 +244,7 @@ export default function TopicAddSessionScreen() {
               </VStack>
             </Button>)}
           </Section>)}
-          {paths.kind !== 'old' && query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+          {query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
             <Button label={`Use ${query.trim()}`} onPress={() => choose(query.trim())} modifiers={[disabled(!choosing)]} />
           </Section>}
 

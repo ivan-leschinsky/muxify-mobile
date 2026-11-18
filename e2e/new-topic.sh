@@ -2,9 +2,10 @@
 #
 # Runs e2e/new-topic.ad on the Topics tab, against a sandboxed Muxify on this
 # Mac, the dev Host (see e2e/sandbox.sh), then checks that the Topic it made
-# has its title and the Tag #work. Then runs e2e/plus-without-topics.ad. Both
-# drive the sheets of a Host CLI that has no Go to, where New Session and New
-# Topic are in the Options menu.
+# has its title and the Tag #work: New Topic is in the ＋ menu of the Go to
+# bar, which the Host Server serves. Then turns the Host Server off and runs
+# e2e/plus-without-topics.ad: in Sessions only, New Session is in the Options
+# menu.
 #
 #   bash e2e/new-topic.sh
 
@@ -27,4 +28,5 @@ assert topic["tags"] == ["work"], topic
 print("the Mac has the Topic, with #work")
 ' "$TITLE" || exit 1
 
+touch "$MUXIFY_E2E_ROOT/no-host-server"
 agent-device test ./e2e/plus-without-topics.ad

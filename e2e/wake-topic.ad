@@ -13,6 +13,8 @@ is "visible" "label=\"Start Fresh\""
 press "label=\"Reopen\" hittable=true"
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "wakea/e2e-wake-reopen"
+# Back takes once the push onto the Terminal has ended.
+wait 1500
 back
 wait "label=\"Host Options\"" 8000
 wait "label=\"Topic e2e-wake-fresh\"" 15000
@@ -22,6 +24,7 @@ wait "label=\"Start Fresh\" hittable=true" 15000
 press "label=\"Start Fresh\" hittable=true"
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "wakeb/e2e-wake-fresh"
+wait 1500
 back
 wait "label=\"Host Options\"" 8000
 wait "label=\"Host Options\"" 15000

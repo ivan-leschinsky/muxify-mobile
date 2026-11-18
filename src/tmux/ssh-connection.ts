@@ -1,7 +1,8 @@
 import { createUploader, type OpenUploadChannel } from '@/composer/upload';
-import { deviceLog } from '@/diagnostics/device-log';
+import { describeApp, deviceLog } from '@/diagnostics/device-log';
 import { connectToHost } from '@/ssh/connect-host';
 import { createHostConnections, type Dial, type HostConnections } from '@/ssh/host-connections';
+import type { OpenServerChannel } from '@/ssh/host-server';
 import { deviceHostStore } from '@/storage/device-store';
 import type { HostStore } from '@/storage/store';
 
@@ -31,10 +32,19 @@ export function sshDial(store: HostStore): Dial {
     // uploads and the Host CLI install run on these.
     const openChannel: OpenUploadChannel = (command, events) =>
       connection.openShell({ term: '', command }, events);
+    // The Host Server's channel keeps stderr apart: only stdout carries frames.
+    const openServerChannel: OpenServerChannel = async (command, events) => {
+      const shell = await connection.openShell(
+        { term: '', command },
+        { onData: events.onData, onStderr: events.onStderr, onClosed: events.onClosed },
+      );
+      return { write: (bytes) => shell.write(bytes), close: () => shell.close() };
+    };
     return {
       transport: sshTmuxTransport(connection),
       upload: createUploader(openChannel),
       openChannel,
+      openServerChannel,
       fingerprint,
       verdict,
       isConnected: () => connection.isConnected,
@@ -51,6 +61,7 @@ export function appConnections(): HostConnections {
     dial: sshDial(deviceHostStore()),
     store: deviceHostStore(),
     log: deviceLog(),
+    build: describeApp(),
   });
   return app;
 }

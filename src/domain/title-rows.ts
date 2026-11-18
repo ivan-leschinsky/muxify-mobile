@@ -5,6 +5,8 @@ import type { Topology } from '@/tmux/topology';
 /** One Window in the Title Sheet. */
 export interface TitleWindowRow {
   kind: 'window';
+  /** tmux's own handle, `@2`, which its Actions target. */
+  id: string;
   index: number;
   name: string;
   /** What its active Pane runs, from the Topology; null for a Window of another Session. */
@@ -27,6 +29,7 @@ export type TitleRow =
 export function sessionTitleRows(topology: Topology): TitleWindowRow[] {
   return topology.windows.map((window) => ({
     kind: 'window',
+    id: window.id,
     index: window.index,
     name: window.name,
     program: window.command,
@@ -55,10 +58,10 @@ export function topicTitleRows(
       name: session.name,
       current,
       windows: current ? attached.topology.windows.map((window) => ({
-        kind: 'window' as const, index: window.index, name: window.name, program: window.command,
+        kind: 'window' as const, id: window.id, index: window.index, name: window.name, program: window.command,
         mark: marks.get(window.id) ?? null, current: window.active,
       })) : (session.windows ?? []).map((window) => ({
-        kind: 'window' as const, index: window.index, name: window.name, program: null,
+        kind: 'window' as const, id: window.id, index: window.index, name: window.name, program: null,
         mark: window.mark, current: false,
       })),
     };

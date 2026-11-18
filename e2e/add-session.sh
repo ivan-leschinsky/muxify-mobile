@@ -40,6 +40,7 @@ assert names == [sys.argv[1]], topic
 print("the Mac has the Topic, with", names[0])
 ' "$SESSION" || exit 1
 at=$(tmux display-message -p -t "=$SESSION:" '#{session_path}')
-# /tmp is a link to /private/tmp, and tmux gives the resolved path.
-[ "$at" = "$(cd "$DIR" && pwd -P)" ] || { echo "the Session is at $at, not at $DIR"; exit 1; }
+# /tmp is a link to /private/tmp. The Host Server gives tmux the folder as the
+# phone sent it, where the Host CLI gave it resolved, so compare both resolved.
+[ "$(cd "$at" && pwd -P)" = "$(cd "$DIR" && pwd -P)" ] || { echo "the Session is at $at, not at $DIR"; exit 1; }
 echo "the Session runs at $DIR"

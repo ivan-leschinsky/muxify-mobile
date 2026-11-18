@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react';
 import {
   BottomSheet,
   Button,
+  ContextMenu,
   Divider,
   Group,
   Host,
@@ -72,12 +73,16 @@ export interface PreviewCard {
   preview: string[];
   /** Where a Pane sits in the diagram, as fractions. Panes only. */
   frame?: Frame;
+  /** The long-press menu of a Session card. None when empty or undefined. */
+  menu?: SheetAction[];
 }
 
 export interface SheetAction {
   id: string;
   label: string;
   systemImage?: SFSymbol;
+  /** Ends something on the Host, so the menu draws it in red. */
+  destructive?: boolean;
 }
 
 export interface PickerSheetProps {
@@ -329,10 +334,12 @@ function PaneTile({
   );
 }
 
-export function SessionPreviews({ cards, width, onSelect }: {
+export function SessionPreviews({ cards, width, onSelect, onAction }: {
   cards: PreviewCard[];
   width: number;
   onSelect: (id: string) => void;
+  /** An item of a card's long-press menu: the card's id and the item's. */
+  onAction?: (id: string, action: string) => void;
 }) {
   const { sheetPalette: palette } = useSettings();
   const screen = useWindowDimensions();
@@ -340,7 +347,7 @@ export function SessionPreviews({ cards, width, onSelect }: {
   return (
     <VStack spacing={GRID_GAP}>
       {cards.map((card) => (
-        <PreviewButton key={card.id} card={card} palette={palette} size={metrics.listCard} onSelect={onSelect} />
+        <PreviewButton key={card.id} card={card} palette={palette} size={metrics.listCard} onSelect={onSelect} onAction={onAction} />
       ))}
     </VStack>
   );
@@ -352,13 +359,15 @@ function PreviewButton({
   palette,
   size: { width, height },
   onSelect,
+  onAction,
 }: {
   card: PreviewCard;
   palette: SheetPalette;
   size: Size;
   onSelect: (id: string) => void;
+  onAction?: (id: string, action: string) => void;
 }) {
-  return (
+  const button = (
     <Button
       key={card.id}
       onPress={() => onSelect(card.id)}
@@ -396,6 +405,24 @@ function PreviewButton({
         </VStack>
       </ZStack>
     </Button>
+  );
+  if (onAction === undefined || !card.menu?.length) return button;
+  return (
+    <ContextMenu key={card.id}>
+      <ContextMenu.Items>
+        {card.menu.map((item) => (
+          <Button
+            key={item.id}
+            label={item.label}
+            systemImage={item.systemImage}
+            role={item.destructive ? 'destructive' : undefined}
+            onPress={() => onAction(card.id, item.id)}
+            modifiers={[accessibilityLabel(item.label)]}
+          />
+        ))}
+      </ContextMenu.Items>
+      <ContextMenu.Trigger>{button}</ContextMenu.Trigger>
+    </ContextMenu>
   );
 }
 

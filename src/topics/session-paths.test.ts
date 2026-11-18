@@ -55,7 +55,7 @@ it('omits empty sections and does not change a selected directory', () => {
   expect(sessionPathSections(value, 'missing')).toEqual([]);
 });
 
-describe('the rows of `session-paths`, which has no Topic', () => {
+describe('the rows of `session_paths` with no Topic', () => {
   const { in_this_topic: _, ...ranked } = row;
   const visited = { ...ranked, kind: 'worktree', worktree: { path: '/work/project', branch: 'fix' },
     also_in: [{ id: 't1', label: 'Fix login' }], last_visit: '2026-11-14T09:00:00Z' };

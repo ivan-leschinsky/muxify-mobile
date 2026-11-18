@@ -34,10 +34,9 @@ import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
+import { changeTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { newRequestId } from '@/topics/request';
-import { useAttachHolder } from '@/tmux/attach-context';
 import {
   changes,
   fieldsFromParam,
@@ -55,7 +54,8 @@ const say = speakingAs(deviceLog(), 'edit-topic');
  *
  * Save sends only the fields that differ from what the Host last had. A field
  * the Host refuses shows its reason under it and the sheet stays open, and the
- * next Save sends only what still differs. The Attach reads the Topic again after each Save and on return.
+ * next Save sends only what still differs. The Host Server pushes the change
+ * to the Attach, which reads nothing after a Save.
  */
 export default function TopicEditScreen() {
   const { hostId, topicId, topic } = useLocalSearchParams<{
@@ -73,9 +73,8 @@ export default function TopicEditScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to edit Tags.');
-      if (!left) setConfigTags(result.snapshot.tags);
+      const { tags: listed } = await pushedListing(host);
+      if (!left) setConfigTags(listed);
     })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
     return () => { left = true; };
   }, [hostId, attempt]);
@@ -119,7 +118,6 @@ function EditForm({
   palette: Appearance;
 }) {
   const router = useRouter();
-  const holder = useAttachHolder();
   const { appearance } = useSettings();
   const { write, hostName, send, check } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
@@ -147,9 +145,8 @@ function EditForm({
     [...configTags.map((tag) => tag.name), ...retired].filter((name) => chosen.has(name)),
   );
 
+  // Nothing is read after a Save: the Host Server pushes the Topic to the Attach.
   const finished = (done: true | undefined) => {
-    const attached = holder.current();
-    if (attached?.hostId === hostId && attached.state().topic?.id === topicId) void attached.refreshTopic();
     if (done) router.back();
   };
 
@@ -165,15 +162,12 @@ function EditForm({
       router.back();
       return;
     }
-    // One Request id for each field write, made before the work, so that the
-    // Connections' second send of the Save sends each field with its first id.
+    // One Request id for each field write, made before the work, so that a
+    // second send of a field whose answer was lost goes with its first id.
     const requests = new Map(changes(saved, fields).map(({ field }) => [field, newRequestId()]));
     void send(async ({ host, step, refuse, unsure }) => {
-      const outcome = await appConnections().write(host, (transport, muxify) => {
-        step('sending');
-        return saveTopicEdit(saved, fields, (change) =>
-          muxify.change((command) => transport.exec(command), topicId, change, requests.get(change.field)!));
-      });
+      const outcome = await saveTopicEdit(saved, fields, (change) =>
+        changeTopic(host, topicId, change, requests.get(change.field)!, () => step('sending')));
       setSaved(outcome.saved);
       if (outcome.inDoubt !== undefined) unsure(outcome.inDoubt);
       const refused = Object.keys(outcome.errors);
@@ -186,9 +180,8 @@ function EditForm({
   const checkSaved = () => {
     const fields = wanted();
     void check(async ({ host, refuse }) => {
-      const read = await appConnections().read(host, (transport, muxify) => muxify.show((command) => transport.exec(command), topicId));
-      if (read.kind === 'failed') throw new Error(read.error);
-      const onHost: TopicFields = { title: read.topic.label, note: read.topic.note, tags: read.topic.tags };
+      const topic = await pushedTopic(host, topicId);
+      const onHost: TopicFields = { title: topic.label, note: topic.note, tags: topic.tags };
       setSaved(onHost);
       if (changes(onHost, fields).length > 0) refuse(`Some changes are not on ${host.displayName}. Save sends them.`);
       return true as const;

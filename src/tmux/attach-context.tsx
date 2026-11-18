@@ -4,7 +4,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { deviceLog } from '@/diagnostics/device-log';
 import { deviceHostStore } from '@/storage/device-store';
 import { useSettings } from '@/settings/settings-context';
-import { readTopic } from '@/topics/read-topic';
+import { followHostTopic } from '@/topics/read-topic';
+import { markTopicRead } from '@/topics/unread-on-visit';
 
 import { openAttach, type Attach, type AttachState, type LifecyclePhase, type SessionDestination } from './attach';
 import { createAttachHolder, type AttachHolder, type AttachOrigin } from './attach-holder';
@@ -33,7 +34,8 @@ export function AttachProvider({ children }: { children: ReactNode }) {
           openAttach({
             ...request,
             store: deviceHostStore(),
-            readTopic,
+            followTopic: followHostTopic,
+            markTopicRead,
             openConnection: appConnections().openConnection,
             log: deviceLog(),
           }),

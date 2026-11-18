@@ -19,20 +19,30 @@ ad open "$APP" --platform ios --relaunch "${device[@]}"
 ad wait 'label="Host Dev Host"' 15000
 ad press 'label="Host Dev Host"' --settle
 ad wait 'label="Host Options"' 8000
+# A Host Server serves Go to, so New Topic is in the ＋ menu of its bar. A
+# debug build's warning toast lies over the bar and takes the tap.
+ad react-native dismiss-overlay
+ad press 'label="New"' --settle
+ad wait 'role=button label="New Topic"' 8000
+ad press 'role=button label="New Topic"' --settle
+ad wait 'label="Tag #work"' 15000
+ad press 'label="Cancel"' --settle
+ad wait 'label="Host Options"' 8000
 ad press 'label="Host Options"' --settle
-ad wait 'label="New Topic"' 8000
+ad wait 'label="Configure chooser"' 8000
 ad snapshot --json > "$MUXIFY_E2E_ROOT/menu.json"
 python3 - "$MUXIFY_E2E_ROOT/menu.json" <<'PY'
 import json, sys
 nodes = json.load(open(sys.argv[1]))['data']['nodes']
 labels = [node.get('label') for node in nodes]
-assert labels.index('New Session') < labels.index('New Topic') < labels.index('Configure chooser'), labels
+assert 'Configure chooser' in labels, labels
+assert 'New Session' not in labels and 'New Topic' not in labels, labels
 assert 'Configure panels' not in labels, labels
-print('Options has New Session, New Topic and Configure chooser.')
+print('Options has Configure chooser, and New Session and New Topic are in the ＋ menu.')
 PY
-ad press 'role=button label="New Topic"' --settle
-ad wait 'label="Tag #work"' 15000
-ad press 'label="Cancel"' --settle
+ad press 'role=button label="Configure chooser"' --settle
+ad wait 'id="chooser-hidden-sessions"' 8000
+ad back --settle
 ad wait 'label="Session 0"' 15000
 ad press 'label="Session 0"' --settle
 ad wait 'id="pane-command"' 20000

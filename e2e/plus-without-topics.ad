@@ -1,7 +1,8 @@
 context platform=ios kind=simulator
 
-# On a Host CLI that has no Go to, Options offers New Session. Run
-# e2e/new-topic.sh, not this file: it runs this in the sandbox.
+# On a Host CLI that has no Host Server, the Host Screen shows Sessions only,
+# and Options offers New Session. Run e2e/new-topic.sh, not this file: it runs
+# this in the sandbox, with the Host Server turned off.
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000

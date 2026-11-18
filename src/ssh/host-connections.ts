@@ -1,9 +1,13 @@
+import { attachmentUpload } from '@/composer/host-upload';
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
+import { followListing, type ListingFeed, type LiveListing } from '@/ssh/host-listing-feed';
+import { createHostServer, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { ConnectStep, HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
+import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 import {
   installHostCli,
@@ -11,8 +15,9 @@ import {
   type HostCliState,
   type OpenCommandChannel,
 } from '@/topics/host-cli-install';
-import { createMuxifyCli, type MuxifyCli } from '@/topics/muxify-cli';
-import { RequestUnanswered, WriteOutcomeUnknown } from '@/topics/request';
+import { topicsUnavailable } from '@/topics/host-topics';
+import { createMuxifyPath, type MuxifyPath } from '@/topics/muxify-path';
+import { WriteOutcomeUnknown } from '@/topics/request';
 
 /** How long a Connection with no Attach stays open after its last screen read. */
 export const IDLE_MS = 60_000;
@@ -25,6 +30,8 @@ export interface Dialed {
   upload?: HostConnection['upload'];
   /** Opens a non-PTY channel for one command, outside the screen exec and its deadline. */
   openChannel?: OpenCommandChannel;
+  /** Opens a non-PTY channel whose stderr stays apart from its stdout: the Host Server's. */
+  openServerChannel?: OpenServerChannel;
   fingerprint: string;
   verdict: KeyVerdict;
   isConnected(): boolean;
@@ -38,8 +45,11 @@ export interface Dialed {
  */
 export type Dial = (host: Host, dropped: () => void, progress?: (step: ConnectStep) => void) => Promise<Dialed>;
 
-/** What a screen does with a Connection: its commands, and the Host's `muxify`. */
-export type ScreenUse<T> = (transport: TmuxTransport, muxify: MuxifyCli) => Promise<T>;
+/**
+ * What a screen does with a Connection's commands: tmux's own, as Sessions
+ * only and the Session form read and write them. Topics go on the Host Server.
+ */
+export type ScreenUse<T> = (transport: TmuxTransport) => Promise<T>;
 
 export interface ScreenOptions {
   /**
@@ -59,9 +69,8 @@ export interface HostConnections {
   read<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /**
    * A screen's write. When it goes out and no answer comes back, it fails with
-   * `WriteOutcomeUnknown`: it may have reached the Host. Before that, a write
-   * that went out with a Request id is sent one more time. A failure with
-   * another error means that nothing reached the Host.
+   * `WriteOutcomeUnknown`: it may have reached the Host, so it is not sent
+   * again. A failure with another error means that nothing reached the Host.
    */
   write<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /** React Native's app-state, forwarded as a fact. */
@@ -74,6 +83,33 @@ export interface HostConnections {
   hostCli(hostId: string): HostCliState;
   /** Hears every change of a Host's install. Answers the way to stop hearing. */
   subscribeHostCli(listener: (hostId: string, state: HostCliState) => void): () => void;
+  /** The Host Server of the Host's open Connection, or null when none runs. */
+  hostServer(hostId: string): HostServer | null;
+  /**
+   * Runs `work` on the Host Server of the Host's Connection, opening one when
+   * none is open, and holds the Connection while it runs. A Host Server that
+   * starts again on the Connection takes the requests that wait for it. With
+   * no Host Server, as in Sessions only, it fails with the reason before `work`
+   * runs, so nothing reached the Host.
+   */
+  onServer<T>(host: Host, work: (server: HostServer) => Promise<T>, options?: ScreenOptions): Promise<T>;
+  /**
+   * What the Host Server of the Host's latest Connection says: where it
+   * stands, and the latest Listing it pushed. It stays after its Connection
+   * closes, with the server `closed`, until a new Connection starts one. Null
+   * before the Host has had a Host Server.
+   */
+  listing(hostId: string): LiveListing | null;
+  /** Hears every change of a Host's `listing`. Answers the way to stop hearing. */
+  subscribeListing(listener: (hostId: string) => void): () => void;
+  /**
+   * A screen that shows the Host holds its Connection, opening one when none
+   * is open, until it calls what this answers. The Connection does not close
+   * for idle while it is held, and its idle minute starts when it is let go.
+   * Unlike an Attach, a hold does not keep the Connection over a return from
+   * the background.
+   */
+  hold(host: Host, options?: ScreenOptions): Promise<() => void>;
 }
 
 /** An exec that passed its deadline. Its Connection is suspect. */
@@ -87,12 +123,15 @@ export class ExecDeadlineError extends Error {
 interface Entry {
   host: Host;
   dialed: Promise<Dialed>;
-  muxify: MuxifyCli;
+  /** Where `muxify` is on the Host, which the Host Server runs. */
+  muxify: MuxifyPath;
   /** The Host CLI install on this Connection, once it has started. It never rejects. */
   install: Promise<HostCliInstall> | null;
+  /** The Host Server of this Connection, once it has started. */
+  server: HostServer | null;
   /** Attaches that hold it. */
   attaches: number;
-  /** Screen reads and writes in flight on it. */
+  /** Screen reads and writes in flight on it, and the screens that hold it. */
   uses: number;
   idle: Timer | null;
   /** What the Attaches on it run when a screen exec passes its deadline. */
@@ -115,6 +154,8 @@ export function createHostConnections(options: {
   store: Pick<HostStore, 'rememberFingerprint'>;
   clock?: Clock;
   log?: Log;
+  /** The phone's build line, which its Host Server `hello` carries. */
+  build?: string;
 }): HostConnections {
   const { dial, store } = options;
   const clock = options.clock ?? systemClock;
@@ -124,6 +165,9 @@ export function createHostConnections(options: {
   /** Each Host's latest install, and the Connection it runs on. */
   const installs = new Map<string, { entry: Entry; state: HostCliState }>();
   const hostCliListeners = new Set<(hostId: string, state: HostCliState) => void>();
+  /** Each Host's latest Listing feed, and the Connection whose Host Server it follows. */
+  const feeds = new Map<string, { entry: Entry; feed: ListingFeed }>();
+  const listingListeners = new Set<(hostId: string) => void>();
   /** One value, so a reader that compares snapshots sees no change. */
   const NOT_STARTED: HostCliState = { kind: 'idle' };
   let backgrounded = false;
@@ -144,8 +188,9 @@ export function createHostConnections(options: {
     const entry: Entry = {
       host,
       dialed,
-      muxify: createMuxifyCli((line) => say(`${host.displayName}: ${line}`)),
+      muxify: createMuxifyPath((line) => say(`${host.displayName}: ${line}`)),
       install: null,
+      server: null,
       attaches: 0,
       uses: 0,
       idle: null,
@@ -155,8 +200,8 @@ export function createHostConnections(options: {
     self = entry;
     entry.dialed.then(
       (opened) => {
-        // A changed Host key waits for a screen to accept it: see run().
-        if (opened.verdict.kind !== 'changed') install(entry, opened);
+        // A changed Host key waits for a screen to accept it: see acquireForScreen().
+        if (opened.verdict.kind !== 'changed') begin(entry, opened);
       },
       () => {
         entry.gone = true;
@@ -176,6 +221,42 @@ export function createHostConnections(options: {
     for (const listener of [...hostCliListeners]) listener(hostId, state);
   }
 
+  /** What a Connection starts once its Host key is accepted: its Host Server and the Host CLI install. */
+  function begin(entry: Entry, dialed: Dialed): void {
+    serve(entry, dialed);
+    install(entry, dialed);
+  }
+
+  /**
+   * Starts the Host Server of the Connection, once, with the `muxify` that the
+   * probe finds. It does not wait for the install, which tells it its answer.
+   * It lives as long as the Connection. See ADR 0025.
+   */
+  function serve(entry: Entry, dialed: Dialed): void {
+    if (entry.server || entry.gone || !dialed.openServerChannel) return;
+    const { host } = entry;
+    const exec = dialed.transport.exec;
+    entry.server = createHostServer({
+      open: dialed.openServerChannel,
+      locate: () => entry.muxify.locate(exec),
+      forget: () => entry.muxify.forget(),
+      version: async (path) => (await exec(`${shellQuote(path)} --version`)).stdout.trim().split('\n')[0] ?? '',
+      connected: () => !entry.gone && dialed.isConnected(),
+      build: options.build ?? 'Muxify phone',
+      clock,
+      say: (line) => say(`${host.displayName}: Host Server: ${line}`),
+    });
+    const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`));
+    const changed = () => {
+      // A Connection that a newer one replaced has nothing to say.
+      if (feeds.get(host.id)?.feed !== feed) return;
+      for (const listener of [...listingListeners]) listener(host.id);
+    };
+    feeds.set(host.id, { entry, feed });
+    feed.onChange(changed);
+    changed();
+  }
+
   /**
    * Installs or updates the Host CLI, once per Connection, on a channel of its
    * own: it never goes through withDeadline, so a long download never makes
@@ -191,7 +272,8 @@ export function createHostConnections(options: {
     publish(entry, { kind: 'running' });
     entry.install = installHostCli(dialed.openChannel, { clock }).then((result) => {
       say(`${host.displayName}: Host CLI: ${result.line}`);
-      if (result.kind === 'installed' || result.kind === 'updated') entry.muxify.forget();
+      // A new `muxify`: the Host Server forgets the path and starts on it.
+      entry.server?.installAnswered(result);
       entry.uses -= 1;
       settle(entry);
       publish(entry, { kind: 'done', result });
@@ -205,6 +287,7 @@ export function createHostConnections(options: {
     entry.gone = true;
     clock.cancel(entry.idle);
     entry.idle = null;
+    entry.server?.close();
     if (entries.get(entry.host.id) === entry) entries.delete(entry.host.id);
     say(`${entry.host.displayName}: closed (${why})`);
     return entry.dialed.then((dialed) => dialed.disconnect()).catch(() => {});
@@ -236,6 +319,17 @@ export function createHostConnections(options: {
     if (!options?.onHostKey || options.onHostKey(dialed.verdict, dialed.fingerprint)) return;
     void drop(entry, 'its Host key was refused');
     throw Object.assign(new Error('The Host key was rejected.'), { code: 'HOST_KEY_REJECTED' });
+  }
+
+  /**
+   * The Host's Connection for a screen: its Host key checked first, and only
+   * then its Host Server and the Host CLI install started on it.
+   */
+  async function acquireForScreen(host: Host, options: ScreenOptions | undefined): Promise<{ entry: Entry; dialed: Dialed }> {
+    const { entry, dialed } = await acquire(host);
+    checkHostKey(entry, dialed, options);
+    begin(entry, dialed);
+    return { entry, dialed };
   }
 
   function suspect(entry: Entry): void {
@@ -275,16 +369,12 @@ export function createHostConnections(options: {
     host: Host,
     work: ScreenUse<T>,
     options: ScreenOptions | undefined,
-    unanswered?: RequestUnanswered,
   ): Promise<{ value: T } | { error: unknown; failedByConnection: boolean }> {
-    const { entry, dialed } = await acquire(host);
-    checkHostKey(entry, dialed, options);
-    install(entry, dialed);
-    if (unanswered) entry.muxify.resending(unanswered.request);
+    const { entry, dialed } = await acquireForScreen(host, options);
     entry.uses += 1;
     busy(entry);
     try {
-      return { value: await work(withDeadline(entry, dialed.transport), entry.muxify) };
+      return { value: await work(withDeadline(entry, dialed.transport)) };
     } catch (error) {
       return { error, failedByConnection: error instanceof ExecDeadlineError || !dialed.isConnected() };
     } finally {
@@ -306,31 +396,14 @@ export function createHostConnections(options: {
   /**
    * A write with no answer may have reached the Host, so a second send could
    * apply it two times. That is why a write is not sent again as a read is.
-   * A write that went out with a Request id is the exception: the Host keeps
-   * the id and applies the Request one time, and a second send gets the
-   * answer of the first. The phone then learns what the Host did, which it
-   * cannot learn another way. One second send is enough to cover an answer
-   * that was lost. See ADR 0021.
+   * Host Writes with a Request id go on the Host Server, which sends them
+   * again safely: see host-write-request.
    */
   async function write<T>(host: Host, work: ScreenUse<T>, options: ScreenOptions | undefined): Promise<T> {
     const first = await attempt(host, work, options);
     if ('value' in first) return first.value;
-    if (!(first.error instanceof RequestUnanswered)) {
-      if (first.failedByConnection) throw new WriteOutcomeUnknown(false, first.error);
-      throw first.error;
-    }
-    say(`${host.displayName}: a write with a Request id got no answer; sending the same Request again`);
-    try {
-      // A deadline closes a Connection that no Attach holds, so this send
-      // dials a new one. A Connection that an Attach holds is the Attach's to
-      // close, so this send can go out on that one. Each is safe: the Host
-      // lets one id run in one process at a time.
-      const second = await attempt(host, work, options, first.error);
-      if ('value' in second) return second.value;
-      throw second.error;
-    } catch (error) {
-      throw new WriteOutcomeUnknown(true, error);
-    }
+    if (first.failedByConnection) throw new WriteOutcomeUnknown(false, first.error);
+    throw first.error;
   }
 
   return {
@@ -355,7 +428,8 @@ export function createHostConnections(options: {
 
       return {
         transport: dialed.transport,
-        upload: dialed.upload,
+        // Through the Host Server, read when an upload starts; the script only in Sessions only.
+        upload: attachmentUpload(() => entry.server, dialed.upload),
         fingerprint: dialed.fingerprint,
         verdict: dialed.verdict,
         close: () => release(false),
@@ -375,6 +449,46 @@ export function createHostConnections(options: {
     write,
 
     hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
+
+    hostServer: (hostId) => entries.get(hostId)?.server ?? null,
+
+    async onServer(host, work, options) {
+      const { entry } = await acquireForScreen(host, options);
+      const { server } = entry;
+      if (!server) throw new Error(topicsUnavailable(host.displayName, 'its Connection runs no Host Server.'));
+      const state = server.state();
+      if (state.kind === 'sessions-only') throw new Error(`${topicsUnavailable(host.displayName, state.reason)}.`);
+      entry.uses += 1;
+      busy(entry);
+      try {
+        return await work(server);
+      } finally {
+        entry.uses -= 1;
+        settle(entry);
+      }
+    },
+
+    listing: (hostId) => feeds.get(hostId)?.feed.current() ?? null,
+
+    subscribeListing(listener) {
+      listingListeners.add(listener);
+      return () => {
+        listingListeners.delete(listener);
+      };
+    },
+
+    async hold(host, options) {
+      const { entry } = await acquireForScreen(host, options);
+      entry.uses += 1;
+      busy(entry);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        entry.uses -= 1;
+        settle(entry);
+      };
+    },
 
     subscribeHostCli(listener) {
       hostCliListeners.add(listener);

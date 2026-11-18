@@ -6,22 +6,24 @@ import HostScreen from '@/app/hosts/[id]';
 import { answered } from '@/domain/host-listing';
 import { requestGoTo } from '@/keyboard/go-to-request';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
+import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { EnvironmentSnapshot, SessionId, TopicId } from '@/topics/environment';
 import type { HostTopics } from '@/topics/host-topics';
+import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockRouter = { push: jest.fn() };
 const mockRemember = jest.fn();
 const mockOpenSession = jest.fn();
 const mockOpen = jest.fn();
 const mockPaths = jest.fn();
-const mockNewSession = jest.fn();
+let mockServer = fakeHostServer();
 const mockVisit = jest.fn();
 const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
-let mockReading: { listing: unknown; topics: HostTopics; read: jest.Mock };
+let mockReading: { listing: unknown; topics: HostTopics; sessionsOnly: boolean; retry: jest.Mock };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -59,7 +61,7 @@ jest.mock('@/components/tappable-row', () => ({ TAPPABLE_ROW: {} }));
 jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: () => null }));
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
-jest.mock('@/hooks/use-host-reading', () => ({ useHostReading: () => mockReading }));
+jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
   openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: jest.fn(), busyTopic: null,
 }) }));
@@ -81,18 +83,13 @@ jest.mock('@/tmux/attach-context', () => ({
   useAttachState: () => null,
   useOpenSession: () => mockOpen,
 }));
-jest.mock('@/tmux/ssh-connection', () => {
-  const work = (_host: unknown, run: Function) =>
-    run({ exec: jest.fn() }, { rankedSessionPaths: mockPaths, newSession: mockNewSession, visit: mockVisit });
-  return { appConnections: () => ({ read: work, write: work }) };
-});
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 
 const sid = (id: string) => id as SessionId;
 const tid = (id: string) => id as TopicId;
 const topicCard = (id: string, label: string) =>
   ({ kind: 'topic' as const, mark: null, sessions: [], topic: { id: tid(id), label, note: null, tags: [], state: 'live' as const } });
-const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
-  capabilities,
+const snapshot = (): EnvironmentSnapshot => ({
   sidebar: null,
   tags: [],
   sessions: [
@@ -103,14 +100,15 @@ const snapshot = (capabilities: string[]): EnvironmentSnapshot => ({
   unpinned: { limit: 3, places: [topicCard('t1', 'Fix login')], guests: [], bench: [] },
   no_topic: [sid('$1')],
 });
-const path = (name: string) => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
+const path = (name: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
-async function mount(capabilities = ['request', 'session-paths']) {
+async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot() }) {
   mockReading = {
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
-    topics: { kind: 'listed', snapshot: snapshot(capabilities) },
-    read: jest.fn(async () => {}),
+    topics,
+    sessionsOnly: topics.kind === 'unavailable',
+    retry: jest.fn(),
   };
   await act(async () => { renderer = create(<HostScreen />); });
   const field = searchBar(renderer);
@@ -121,13 +119,22 @@ beforeEach(() => {
   mockSettings = {};
   mockKeys = {};
   mockFocused = true;
-  mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('api'), path('web')] });
-  mockNewSession.mockImplementation(async (_exec, _folder, name) => ({ kind: 'added', session: name }));
-  mockVisit.mockResolvedValue({ kind: 'changed' });
+  mockPaths.mockResolvedValue([path('api'), path('web')]);
+  mockServer = fakeHostServer();
+  mockServer.answer = (payload) => ({ changed: { session_name: newSessionOf(payload)?.name } });
+  // The Host's ranked rows for each `session_paths`, and the visits it records.
+  mockServer.on.session_paths = async (asked) => sessionPathRowsJson(await mockPaths(asked));
+  mockServer.on.visit_session_path = mockVisit;
+  mockVisit.mockResolvedValue({});
   mockOpen.mockResolvedValue(undefined);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
+
+const newSessionOf = (payload: object) =>
+  (payload as { environment?: { command: { new_session?: { directory: string; name: string } } } }).environment?.command.new_session;
+/** The `new_session` writes the Host Server got. */
+const newSessions = () => mockServer.requests.flatMap((payload) => newSessionOf(payload) ?? []);
 
 /** What VoiceOver calls each button on screen, in order. */
 const labels = () => renderer.root.findAllByType(Button).flatMap((node) =>
@@ -150,24 +157,29 @@ describe('the tabs', () => {
     expect(mockRemember.mock.calls).toEqual([['host', 'sessions'], ['host', 'sessions']]);
   });
 
-  it('shows every running Session on the Sessions tab that the user last chose', async () => {
+  it('shows every running Session on the Sessions tab that the user last chose, with its Actions', async () => {
     mockSettings = { hostScreenTabs: { host: 'sessions' } };
     await mount();
 
-    expect(labels()).toEqual(['Session api', 'Session api/fix-login']);
+    // Remove from Topic only for the Session in a Topic.
+    expect(labels()).toEqual([
+      'Rename Session…', 'Stop Session…', 'Session api',
+      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'Session api/fix-login',
+    ]);
   });
 });
 
-describe('on a Host CLI with no Go to', () => {
-  it('has no bar, and keeps New Session and New Topic in Options with the sheets of today', async () => {
-    await mount(['request']);
+describe('in Sessions only', () => {
+  it('has no bar and no New Topic, and keeps New Session in Options with the Session form', async () => {
+    await mount({ kind: 'unavailable', host: 'Dev Host', reason: 'the Host Server did not answer' });
 
     expect(searchBar(renderer)).toBeUndefined();
-    expect(menu()).toEqual(['New Session', 'New Topic', 'Configure chooser']);
+    expect(menu()).toEqual(['New Session', 'Configure chooser']);
     expect(mockKeys['go-to']).toBeUndefined();
+    expect(mockKeys['new-topic']).toBeUndefined();
 
-    toolbarMenuActions(renderer).get('New Topic')!.props.onPress();
-    expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/topic-form', params: { hostId: 'host' } });
+    toolbarMenuActions(renderer).get('New Session')!.props.onPress();
+    expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/session-form', params: { hostId: 'host' } });
   });
 });
 
@@ -176,7 +188,7 @@ describe('the bar at the bottom', () => {
     await mount();
 
     expect(searchBar(renderer)!.props.placeholder).toBe('Go to');
-    expect(menu()).toEqual(['Configure chooser', 'New Topic', 'New Session at a folder']);
+    expect(menu()).toEqual(['Mark All as Read', 'Configure chooser', 'New Topic', 'New Session at a folder']);
 
     toolbarMenuActions(renderer).get('New Topic')!.props.onPress();
     expect(mockRouter.push).toHaveBeenCalledWith({ pathname: '/new-topic', params: { hostId: 'host' } });
@@ -222,16 +234,25 @@ describe('Go to', () => {
     expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
   });
 
+  it('asks the Host Server for the folders of an empty field, and draws them in its order after the running Sessions', async () => {
+    mockPaths.mockResolvedValue([path('web'), path('api')]);
+    await mount();
+    await focusGoTo();
+
+    expect(mockPaths).toHaveBeenCalledWith({});
+    expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/web', 'Folder /work/api']);
+  });
+
   it('matches the running Sessions by the text in the field, and asks the Host for the folders', async () => {
     jest.useFakeTimers();
     await mount();
     await focusGoTo();
-    mockPaths.mockResolvedValue({ kind: 'listed', rows: [path('web')] });
+    mockPaths.mockResolvedValue([path('web')]);
     await type('login');
     await act(async () => { jest.runAllTimers(); });
     jest.useRealTimers();
 
-    expect(mockPaths).toHaveBeenLastCalledWith(expect.any(Function), 'login');
+    expect(mockPaths).toHaveBeenLastCalledWith({ query: 'login' });
     expect(labels().filter((label) => label !== 'New Session here')).toEqual(['Session api/fix-login', 'Folder /work/web']);
   });
 
@@ -252,8 +273,8 @@ describe('Go to', () => {
     await act(async () => { row('Folder /work/api').props.onPress(); });
 
     expect(mockOpenSession).toHaveBeenCalledWith('api');
-    expect(mockNewSession).not.toHaveBeenCalled();
-    expect(mockVisit).toHaveBeenCalledWith(expect.any(Function), '/work/api', expect.any(String));
+    expect(newSessions()).toEqual([]);
+    expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/api' });
   });
 
   it('makes a Session at a folder where none runs, opens it, and records the visit', async () => {
@@ -261,9 +282,9 @@ describe('Go to', () => {
     await focusGoTo();
     await act(async () => { row('Folder /work/web').props.onPress(); });
 
-    expect(mockNewSession).toHaveBeenCalledWith(expect.any(Function), '/work/web', 'web', expect.any(String));
+    expect(newSessions()).toEqual([{ directory: '/work/web', name: 'web' }]);
     expect(mockOpen).toHaveBeenCalledWith(expect.objectContaining({ destination: { sessionName: 'web', topic: null } }));
-    expect(mockVisit).toHaveBeenCalledWith(expect.any(Function), '/work/web', expect.any(String));
+    expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/web' });
     expect(mockRouter.push).toHaveBeenCalledWith('/terminal');
   });
 
@@ -273,14 +294,14 @@ describe('Go to', () => {
     const [here] = renderer.root.findAllByType(Button).filter((node) => node.props.label === 'New Session here');
     await act(async () => { here!.props.onPress(); });
 
-    expect(mockNewSession).toHaveBeenCalledWith(expect.any(Function), '/work/api', 'api+2', expect.any(String));
+    expect(newSessions()).toEqual([{ directory: '/work/api', name: 'api+2' }]);
 
     await focusGoTo();
     await act(async () => { mockKeys['list-down']!(); });
     await act(async () => { mockKeys['list-down']!(); });
     await act(async () => { mockKeys['list-down']!(); });
     await act(async () => { mockKeys['new-session-here']!(); });
-    expect(mockNewSession).toHaveBeenLastCalledWith(expect.any(Function), '/work/web', 'web', expect.any(String));
+    expect(newSessions().at(-1)).toEqual({ directory: '/work/web', name: 'web' });
   });
 
   it('picks the row that ↓ moved to on Return, from a hardware keyboard and from the software one', async () => {
@@ -307,7 +328,7 @@ describe('Go to', () => {
   });
 
   it('keeps the list and says why when the Host refuses the folder, and sends a new Request on Retry', async () => {
-    mockNewSession.mockResolvedValueOnce({ kind: 'failed', error: 'No folder at /work/web.' });
+    mockServer.answer = () => { throw refused('No folder at /work/web.', 'session_path_unavailable'); };
     await mount();
     await focusGoTo();
     await act(async () => { row('Folder /work/web').props.onPress(); });
@@ -316,8 +337,9 @@ describe('Go to', () => {
     expect(mockRouter.push).not.toHaveBeenCalled();
 
     await act(async () => { renderer.root.findAllByType(Button).find((node) => node.props.label === 'Retry')!.props.onPress(); });
-    expect(mockNewSession).toHaveBeenCalledTimes(2);
-    expect(mockNewSession.mock.calls[1][3]).not.toBe(mockNewSession.mock.calls[0][3]);
+    const [first, second] = mockServer.writes();
+    expect(mockServer.writes()).toHaveLength(2);
+    expect(second!.request).not.toBe(first!.request);
   });
 });
 
@@ -331,7 +353,7 @@ describe('New Session at a folder', () => {
     expect(labels()).toEqual(['Folder /work/api', 'Folder /work/web']);
 
     await act(async () => { row('Folder /work/api').props.onPress(); });
-    expect(mockNewSession).toHaveBeenCalledWith(expect.any(Function), '/work/api', 'api+2', expect.any(String));
+    expect(newSessions()).toEqual([{ directory: '/work/api', name: 'api+2' }]);
     expect(mockOpenSession).not.toHaveBeenCalled();
   });
 });

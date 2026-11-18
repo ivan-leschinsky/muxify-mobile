@@ -1,4 +1,4 @@
-import type { TopicId } from '@/topics/environment';
+import type { SessionId, TopicId } from '@/topics/environment';
 import type { CardSection } from '@/topics/topic-action';
 import { dropCommand } from '@/topics/topic-drop';
 
@@ -7,7 +7,7 @@ import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from './ho
 
 const topic = (id: string, section: CardSection, pinned = section === 'pinned'): HostScreenRow =>
   ({ kind: 'topic', id: id as TopicId, label: id, section, pinned }) as HostScreenRow;
-const locked = (name: string): HostScreenRow => ({ kind: 'locked-session', name, mark: null, pinned: false });
+const locked = (name: string): HostScreenRow => ({ kind: 'locked-session', session: '$9' as SessionId, name, mark: null, pinned: false });
 const open = (id: string): HostScreenRow => ({ kind: 'open-place', id });
 const section = (id: HostScreenSection['id'], rows: HostScreenRow[]): HostScreenSection => ({
   id,

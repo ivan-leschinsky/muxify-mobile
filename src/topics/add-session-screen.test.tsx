@@ -1,18 +1,15 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, TextField } from '@expo/ui/swift-ui';
-import { ExecDeadlineError } from '@/ssh/host-connections';
+import { fakeHostServer, lost, refused, snapshotPush, topicPush } from '@/test-support/fake-host-server';
 import { toolbarSide } from '@/test-support/toolbar';
 
 import TopicAddSessionScreen from '@/app/topic-add-session';
-import type { AddSessionRead } from './add-session';
-import type { SessionPathsRead } from './session-paths';
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
 const mockPaths = jest.fn();
-const mockTopics = jest.fn();
-const mockWrite = jest.fn();
+let mockServer = fakeHostServer();
 const mockAdd = jest.fn();
 const mockOpen = jest.fn();
 const mockBack = jest.fn();
@@ -38,11 +35,12 @@ jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () =>
 jest.mock('@/storage/device-store', () => ({ deviceHostStore: () => ({ load: mockLoad }) }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/attach-context', () => ({ useAttachHolder: () => mockHolder, useOpenSession: () => mockOpen }));
-jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ read: mockRead, write: mockWrite }) }));
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ read: mockRead, onServer: mockServer.onServer }) }));
 jest.mock('@/ssh/connect-host', () => ({ describeConnectionFailure: (value: Error) => value.message }));
 
-const listed: SessionPathsRead = { kind: 'listed', choices: [
-  { kind: 'session_path', name: 'project', label: 'Project', directory: ' /exact folder/ ', worktree: null, inThisTopic: true, alsoIn: [] },
+/** The `ok` of `session_paths { topic }`: the Topic's folder choices, as the Host Server gives them. */
+const listed = { topic: { id: 'topic', label: 'Fix login' }, sessions: [], rows: [
+  { kind: 'session_path', name: 'project', label: 'Project', directory: ' /exact folder/ ', worktree: null, in_this_topic: true, also_in: [], last_visit: null },
 ] };
 let renderer: ReactTestRenderer;
 
@@ -51,14 +49,21 @@ beforeEach(() => {
   mockCreated = undefined;
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Host' }] });
   mockPaths.mockResolvedValue(listed);
-  mockTopics.mockResolvedValue({ kind: 'old' });
-  mockRead.mockImplementation((_host, read) => read({ exec: jest.fn() }, { sessionPaths: mockPaths, read: mockTopics }));
-  mockAdd.mockResolvedValue({ kind: 'added', session: 'new-session' });
-  mockWrite.mockImplementation((_host, write) => write({ exec: jest.fn() }, { addSession: mockAdd }));
+  mockRead.mockImplementation((_host, read) => read({ exec: home }));
+  mockServer = fakeHostServer();
+  mockServer.on.session_paths = mockPaths;
+  // The `ok` of each `add_session`, or the error it ends with.
+  mockServer.answer = (payload) => mockAdd((payload as { environment: { command: { add_session: unknown } } }).environment.command.add_session);
+  mockServer.pushes.snapshot = snapshotPush();
+  mockAdd.mockResolvedValue(added('new-session'));
   mockOpen.mockRejectedValue(new Error('Attach failed'));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => { renderer?.unmount(); }); });
+
+/** An exec on the Host whose shell has /Users/me as its home. */
+const home = async (command: string) => ({ stdout: command.includes('$HOME') ? '/Users/me' : '', stderr: '', exitCode: 0 });
+const added = (session: string) => ({ changed: { session_name: session } });
 
 async function mount() { await act(async () => { renderer = create(<TopicAddSessionScreen />); }); }
 function row() { return renderer.root.findAllByType(Button).find((button) => button.props.label === undefined)!; }
@@ -74,9 +79,16 @@ async function type(value: string) {
   });
 }
 
+it('asks the Host Server for the folder choices of the Topic, and lists them', async () => {
+  await mount();
+
+  expect(mockServer.requests).toEqual([{ session_paths: { topic: 'topic' } }]);
+  expect(row().props.modifiers).toContainEqual({ name: 'accessibilityLabel', value: 'Select folder  /exact folder/ ' });
+});
+
 it('selects without a write, then creates once and reuses the Session after Attach fails', async () => {
-  let finish!: (value: AddSessionRead) => void;
-  mockAdd.mockImplementation(() => new Promise<AddSessionRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockAdd.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   const pick = row().props.onPress;
   await act(async () => { pick(); pick(); });
@@ -84,9 +96,9 @@ it('selects without a write, then creates once and reuses the Session after Atta
   const createSession = right().props.onPress;
   await act(async () => { createSession(); createSession(); });
   expect(mockAdd).toHaveBeenCalledTimes(1);
-  expect(mockAdd.mock.calls[0][2]).toBe(' /exact folder/ ');
+  expect(mockAdd.mock.calls[0][0].directory).toBe(' /exact folder/ ');
   expect(sheetGesture()).toBe(false);
-  await act(async () => { finish({ kind: 'added', session: 'new-session' }); });
+  await act(async () => { finish(added('new-session')); });
   await act(async () => { pick(); });
   expect(mockAdd).toHaveBeenCalledTimes(1);
   expect(right().props.children).toBe('Retry Attach');
@@ -100,7 +112,7 @@ it('selects without a write, then creates once and reuses the Session after Atta
 });
 
 it('allows a deliberate new folder attempt after a refused write', async () => {
-  mockAdd.mockResolvedValueOnce({ kind: 'failed', error: 'no directory' });
+  mockAdd.mockRejectedValueOnce(refused('no directory', 'session_path_unavailable'));
   await mount();
   await act(async () => { row().props.onPress(); });
   await submit();
@@ -111,7 +123,7 @@ it('allows a deliberate new folder attempt after a refused write', async () => {
 });
 
 it('keeps typed entry last and available after a read failure', async () => {
-  mockPaths.mockResolvedValue({ kind: 'failed', error: 'read failed' });
+  mockPaths.mockRejectedValue(refused('read failed', 'config_invalid'));
   await mount();
   await type('  ~/folder with spaces  ');
   const buttons = renderer.root.findAllByType(Button);
@@ -119,32 +131,31 @@ it('keeps typed entry last and available after a read failure', async () => {
   await act(async () => { buttons[1].props.onPress(); });
   expect(mockAdd).not.toHaveBeenCalled();
   await submit();
-  expect(mockAdd.mock.calls[0][2]).toBe('~/folder with spaces');
+  // The Host Server takes only absolute folders, so ~ is the Host's home.
+  expect(mockAdd.mock.calls[0][0].directory).toBe('/Users/me/folder with spaces');
 });
 
 it('ignores a late read after a successful write', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await type('/typed');
   await act(async () => { renderer.root.findByType(Button).props.onPress(); });
   await submit();
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(right().props.children).toBe('Retry Attach');
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
   expect(mockAdd).toHaveBeenCalledTimes(1);
 });
 
-it('preserves typed text when an old CLI answers and requires Create and open', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+it('preserves typed text when the folder choices arrive', async () => {
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await type('~/typed');
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(renderer.root.findByType(TextField).props.text.value).toBe('~/typed');
   expect(right().props.children).toBe('Create and open');
-  await act(async () => { right().props.onPress(); });
-  expect(mockAdd.mock.calls[0][2]).toBe('~/typed');
 });
 
 it('does not act on a row callback after Cancel', async () => {
@@ -156,8 +167,8 @@ it('does not act on a row callback after Cancel', async () => {
 });
 
 it('ignores a read after the sheet unmounts', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { renderer.unmount(); finish(listed); });
   expect(mockAdd).not.toHaveBeenCalled();
@@ -165,11 +176,11 @@ it('ignores a read after the sheet unmounts', async () => {
 });
 
 it('ignores a read after Cancel before the sheet unmounts', async () => {
-  let finish!: (value: SessionPathsRead) => void;
-  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  let finish!: (value: unknown) => void;
+  mockPaths.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { left().props.onPress(); });
-  await act(async () => { finish({ kind: 'old' }); });
+  await act(async () => { finish(listed); });
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
   expect(right().props.disabled).toBe(true);
 });
@@ -184,9 +195,8 @@ it('offers Add later only after New Topic has saved', async () => {
 });
 
 it('checks a write the Host did not answer, and opens the new Session of the Topic', async () => {
-  const mockShow = jest.fn().mockResolvedValue({ kind: 'shown', topic: { label: 'Fix login', sessions: [{ id: 's1', name: 'fix-login' }] } });
-  mockRead.mockImplementation((_host, work) => work({ exec: jest.fn() }, { sessionPaths: async () => listed, read: mockTopics, show: mockShow }));
-  mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
+  mockServer.pushes.topic = topicPush('topic', 'Fix login', [{ id: '$1', name: 'fix-login' }]);
+  mockAdd.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
   mockOpen.mockResolvedValue(undefined);
   await mount();
   await act(async () => { row().props.onPress(); });
@@ -194,44 +204,46 @@ it('checks a write the Host did not answer, and opens the new Session of the Top
   expect(right().props.disabled).toBe(true);
   const check = renderer.root.findAllByType(Button).find((button) => button.props.label === 'Check')!;
   await act(async () => { check.props.onPress(); });
-  expect(mockAdd).toHaveBeenCalledTimes(1);
+  expect(mockAdd).toHaveBeenCalledTimes(2);
   expect(mockOpen.mock.calls[0][0].destination.sessionName).toBe('fix-login');
   expect(mockDismiss).toHaveBeenCalledWith('/terminal');
 });
 
-describe('on a Host CLI that takes a Request id', () => {
-  const topics = (sessions: { name: string; topic: string }[]) => ({
-    kind: 'listed', snapshot: { capabilities: ['request'], sessions },
-  });
-  const mockShow = jest.fn();
+describe('the Session name and the Request id', () => {
+  const sessions = (...names: string[]) =>
+    snapshotPush({ sessions: names.map((name, index) => ({ id: `$${index + 1}`, name, topic: 'topic' })) });
   beforeEach(() => {
-    mockShow.mockResolvedValue({ kind: 'shown', topic: { label: 'Fix login', sessions: [] } });
-    mockRead.mockImplementation((_host, read) => read({ exec: jest.fn() }, { sessionPaths: mockPaths, read: mockTopics, show: mockShow }));
+    mockServer.pushes.topic = topicPush('topic', 'Fix login');
   });
   const button = (label: string) => renderer.root.findAllByType(Button).find((node) => node.props.label === label)!;
 
-  it('sends a Session name that the Topic does not have', async () => {
-    mockTopics.mockResolvedValue(topics([{ name: 'project/fix-login', topic: 'topic' }]));
+  it('sends a Session name that the Topic does not have, as the pushed Listing has its Sessions', async () => {
+    mockServer.pushes.snapshot = sessions('project/fix-login');
     await mount();
     await act(async () => { row().props.onPress(); });
     await submit();
 
-    expect(mockAdd.mock.calls[0].slice(1)).toEqual(['topic', ' /exact folder/ ', expect.any(String), 'project+2']);
+    expect(mockServer.writes()).toEqual([{
+      version: 2,
+      command: { add_session: { directory: ' /exact folder/ ', working_copy: { directory: {} }, name: 'project', chosen_name: 'project+2' } },
+      target: { topic: { id: 'topic' } },
+      request: expect.any(String),
+    }]);
   });
 
   it('sends the same Request and the same name on a Retry after no answer', async () => {
-    mockTopics
-      .mockResolvedValueOnce(topics([]))
-      .mockResolvedValue(topics([{ name: 'project/fix-login', topic: 'topic' }]));
-    mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
+    mockAdd.mockRejectedValueOnce(lost()).mockRejectedValueOnce(lost());
     await mount();
     await act(async () => { row().props.onPress(); });
     await submit();
+    mockServer.pushes.snapshot = sessions('project/fix-login');
     await act(async () => { button('Check').props.onPress(); });
     await act(async () => { button('Retry').props.onPress(); });
 
-    expect(mockAdd).toHaveBeenCalledTimes(2);
-    expect(mockAdd.mock.calls[1].slice(3)).toEqual(mockAdd.mock.calls[0].slice(3));
-    expect(mockAdd.mock.calls[0][4]).toBe('project');
+    const [first, second, retry] = mockServer.writes();
+    expect(mockServer.writes()).toHaveLength(3);
+    expect(second).toEqual(first);
+    expect(retry).toEqual(first);
+    expect(first!.command).toMatchObject({ add_session: { chosen_name: 'project' } });
   });
 });

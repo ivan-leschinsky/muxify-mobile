@@ -26,7 +26,7 @@ beforeEach(() => {
   props = {
     lists: ['sessions', 'windows'],
     isPresented: true, onDismiss: jest.fn(), rows: [
-      { kind: 'window', index: 0, name: 'shell', program: 'bash', current: true, mark: null },
+      { kind: 'window', id: '@1', index: 0, name: 'shell', program: 'bash', current: true, mark: null },
     ], loading: false, onPick: jest.fn(), tabs: [
       { id: 'browser', url: 'http://host.test.ts.net:8000', title: 'Preview', active: true },
     ], onOpenTab: jest.fn(),

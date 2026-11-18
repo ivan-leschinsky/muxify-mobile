@@ -45,13 +45,15 @@ bar_on_screen() { on_screen "Go to" || on_screen "New"; }
 # push or a pop can be lost, so it waits that out first.
 open_go_to() {
   sleep 1.5
+  # A debug build's warning toast lies over the bar and takes the tap.
+  agent-device react-native dismiss-overlay >/dev/null 2>&1
   agent-device press 'label="Go to"' >/dev/null 2>&1
   agent-device wait 'role=search' 3000 >/dev/null
   agent-device snapshot -i 2>/dev/null | grep -q 'search.*\[focused\]' || fail "a tap on Go to did not give it the keys ($1)"
 }
 
 back_to_host_screen() {
-  agent-device press 'label="Back"' --settle >/dev/null
+  agent-device press 'id="BackButton"' --settle >/dev/null
   agent-device wait 'label="Host Options"' 8000 >/dev/null || fail "Back did not return to the Host Screen"
 }
 
@@ -94,7 +96,7 @@ agent-device press 'label="Cancel Move"' --settle >/dev/null
 agent-device wait 'label="Go to"' 5000 >/dev/null || fail "the bar did not come back after Cancel"
 echo "ok: the bar goes away while a Topic card moves"
 
-agent-device press 'label="Back"' --settle >/dev/null
+agent-device press 'id="BackButton"' --settle >/dev/null
 agent-device wait 'label="Host Dev Host"' 8000 >/dev/null || fail "Back did not return to the Hosts"
 sleep 1
 bar_on_screen && fail "the bar shows on the Hosts"

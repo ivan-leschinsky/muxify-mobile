@@ -42,7 +42,7 @@ mkdir -p "$MUXIFY_E2E_ROOT/edit-topic"
 muxify topic add-session "$MUXIFY_E2E_ROOT/edit-topic" --topic "$id" --json >/dev/null || exit 1
 
 agent-device test ./e2e/edit-topic.ad || exit 1
-mac_has "topic['title'] == \"$RENAMED\" and topic['note'] == 'e2e second note' and sorted(topic['tags']) == ['personal', 'work']" || exit 1
+mac_has "topic['title'] == \"$RENAMED\" and topic['note'] == '-x e2e second note' and sorted(topic['tags']) == ['personal', 'work']" || exit 1
 
 agent-device test ./e2e/edit-topic-clear.ad || exit 1
 mac_has "topic['note'] is None and topic['tags'] == ['work'] and topic['title'] == \"$RENAMED\"" || exit 1

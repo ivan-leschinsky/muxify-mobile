@@ -1,5 +1,5 @@
 /**
- * What `muxify topic show --json --topic <id>` says about one Topic, as the
+ * What the Host says about one Topic, in a Host Server's `topic` push, as the
  * Attach holds it. Sessions and Windows keep the order they came in,
  * which is the Mac's order.
  */
@@ -124,6 +124,9 @@ function strongest(marks: (AgentMark | null)[]): AgentMark | null {
 /** What one read of a Topic came to. */
 export type TopicRead = { kind: 'shown'; topic: TopicDetail } | { kind: 'failed'; error: string };
 
+/** What a screen says when the Host Server pushes that its Topic is gone. */
+export const TOPIC_GONE = 'This Topic no longer exists on the Host.';
+
 /**
  * The Topic read held by the Attach. A read in flight and a failed read both keep
  * the last answer, so a return to the screen does not blank it and a Host
@@ -142,7 +145,7 @@ export function topicStartingFrom(seed: TopicDetail | null): TopicView {
 }
 
 /**
- * A Topic as the Host Screen's `environment show` already knows it: its card,
+ * A Topic as the Host Screen's pushed snapshot already knows it: its card,
  * with its live Sessions and Windows in card order. A Session id the snapshot
  * does not contain is left out.
  */

@@ -4,7 +4,7 @@ import type { Drop, DropAnchor } from '@/topics/topic-drop';
 import type { HostScreenRow, HostScreenSection } from './host-screen';
 
 /**
- * What a tap on one row does while the user moves a Topic card. Each target is
+ * one Host Write that the Mac's rules decide: a drop of the card
  * one `muxify topic` command that the Mac's rules decide: a drop of the card
  * next to, onto or into another card, or one of the menu's orders.
  */
@@ -145,7 +145,7 @@ function anchorOf(card: CardRow): DropAnchor | null {
     case 'topic':
       return { kind: 'topic', id: card.id };
     case 'locked-session':
-      return { kind: 'locked-session', name: card.name };
+      return { kind: 'locked-session', session: card.session, name: card.name };
     case 'open-place':
       return { kind: 'open-place', id: card.id };
     case 'unknown-card':

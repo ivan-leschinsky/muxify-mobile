@@ -6,13 +6,20 @@ press "label=\"Host Dev Host\""
 wait "label=\"Host Options\"" 15000
 wait 1500
 
-press "label=\"Host Options\""
+# A Host Server serves Go to, so New Topic is in the ＋ menu of its bar. A
+# debug build's warning toast lies over the bar and takes the tap. The bar
+# shows once the Host Server, behind its proxy here, is live.
+wait "label=\"New\"" 15000
+react-native dismiss-overlay
+press "label=\"New\""
 wait "label=\"New Topic\"" 5000
 press "role=button label=\"New Topic\""
 wait "role=text-field" 8000
 fill "role=text-field" "e2e Request Topic"
-press "label=\"Save\""
-wait "text" "e2e Request Topic was created." 40000
+press "label=\"Create\""
+# The answer of the first send is lost: the second send of the same Request
+# gets it, and the sheet goes on to its folder step with no error.
+wait "text" "Add a Session" 40000
 press "label=\"Add later\""
 wait "label=\"Topic e2e Request Topic\"" 15000
 

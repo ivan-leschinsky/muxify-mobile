@@ -7,11 +7,14 @@ import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
+import { attachmentUpload } from '@/composer/host-upload';
 import type { AttachmentFile, Upload } from '@/composer/types';
+import { fakeHostServer } from '@/test-support/fake-host-server';
 
 import {
   openAttach,
   type Attach,
+  type AttachOptions,
   type AttachState,
   type HostConnection,
 } from './attach';
@@ -401,7 +404,8 @@ function attachOn(
     sessionName?: string;
     topicId?: string;
     restore?: TopicPlace;
-    readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
+    followTopic?: AttachOptions['followTopic'];
+    markTopicRead?: AttachOptions['markTopicRead'];
     zoomed?: boolean;
     upload?: Upload;
     colours?: PaneColours;
@@ -428,7 +432,8 @@ function attachOn(
       restore: options.restore },
     zoomed: options.zoomed ?? true,
     colours: options.colours,
-    readTopic: options.readTopic,
+    followTopic: options.followTopic,
+    markTopicRead: options.markTopicRead,
     store,
     clock,
     log,
@@ -479,6 +484,26 @@ function attachOn(
     phases: () => seen.map((state) => state.phase.kind),
     /** What was written to the Log, as `tag: text`. */
     said: () => log.entries().map((entry) => `${entry.tag}: ${entry.text}`),
+  };
+}
+
+/**
+ * The `topic` subscriptions an Attach holds, as the Host Server would hold
+ * them. With `answer`, each one hears it at once, as its first item.
+ */
+function topicFeeds(answer?: TopicRead) {
+  const held: { topicId: TopicId; onRead: (read: TopicRead) => void; stopped: boolean }[] = [];
+  const follow = (_hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void) => {
+    const entry = { topicId, onRead, stopped: false };
+    held.push(entry);
+    if (answer) onRead(answer);
+    return () => { entry.stopped = true; };
+  };
+  return {
+    held,
+    follow,
+    /** The subscriptions not yet ended. */
+    live: () => held.filter((entry) => !entry.stopped),
   };
 }
 
@@ -1081,6 +1106,20 @@ describe('the Key Row’s Shortcuts', () => {
     // The path as the Composer writes one into a message: single-quoted, with
     // its own quote closed, escaped and reopened.
     expect(server.typed()).toBe("'/tmp/muxify/it'\\''s a shot.png'");
+  });
+
+  it('uploads a pasted image through the Host Server and pastes the path it answers', async () => {
+    const host = fakeHostServer();
+    host.on.upload = () => ({ path: '/tmp/muxify-paste.AbCdEfGh/pasted-image.png' });
+    const { kit, server } = await onServer({ upload: attachmentUpload(() => host.server, undefined) });
+
+    const image = { ...stagedImage, open: () => ({ readBytes: () => Uint8Array.of(1, 2, 3), close: () => {} }) };
+
+    await kit.attach.paste({ kind: 'image', file: image }, never);
+    await settle();
+
+    expect(host.requests).toEqual([{ upload: { name: 'pasted-image.png', offset: 0, data: 'AQID', last: true } }]);
+    expect(server.typed()).toBe("'/tmp/muxify-paste.AbCdEfGh/pasted-image.png'");
   });
 
   it('refuses an image on a Connection that cannot upload, and pastes nothing', async () => {
@@ -1840,7 +1879,8 @@ describe('the current Topic belongs to the Attach', () => {
 
   it('keeps the Topic for a plain sibling pick and clears it for an unrelated Session', async () => {
     const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
-    const kit = attachOn({ topicId: 'a', readTopic: async () => ({ kind: 'shown', topic: detail }) });
+    const kit = attachOn({ topicId: 'a', followTopic: topicFeeds({ kind: 'shown', topic: detail }).follow });
+    kit.attach.showTopic();
     await connected(kit);
     await kit.attach.switchSession({ sessionName: 'play', topic: null });
     await settle();
@@ -1861,38 +1901,76 @@ describe('the current Topic belongs to the Attach', () => {
     expect(kit.wrote.at(-1)).toBe('last place host-1 work b');
   });
 
-  it('keeps the Session and Topic when membership has not loaded, then permits a retry', async () => {
+  it('keeps the Session and Topic when membership has not loaded, then permits a pick once a push loads it', async () => {
     const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
-    let readable = false;
-    const kit = attachOn({ topicId: 'a', readTopic: async () => readable
-      ? { kind: 'shown', topic: detail }
-      : { kind: 'failed', error: 'Host is unavailable' } });
+    const feeds = topicFeeds({ kind: 'failed', error: 'Host is unavailable' });
+    const kit = attachOn({ topicId: 'a', followTopic: feeds.follow });
+    kit.attach.showTopic();
     await connected(kit);
     const writes = kit.wrote.length;
     await expect(kit.attach.switchSession({ sessionName: 'play', topic: null })).rejects.toThrow('Topic has not loaded');
     expect(kit.attach.state().sessionName).toBe('work');
     expect(kit.attach.state().topic?.id).toBe('a');
     expect(kit.wrote).toHaveLength(writes);
-    readable = true;
-    await kit.attach.refreshTopic();
+    feeds.live()[0].onRead({ kind: 'shown', topic: detail });
     await kit.attach.switchSession({ sessionName: 'play', topic: null });
     expect(kit.attach.state().topic?.id).toBe('a');
     expect(kit.wrote.at(-1)).toBe('last place host-1 play a');
   });
 
-  it('rejects an old Topic read after a switch and a pre-edit read after a fresh read', async () => {
-    const reads: ((value: TopicRead) => void)[] = [];
-    const kit = attachOn({ topicId: 'a', readTopic: () => new Promise((resolve) => reads.push(resolve)) });
+  it('follows the new Topic after a switch, and drops the pushes of a subscription that has ended', async () => {
+    const feeds = topicFeeds();
+    const kit = attachOn({ topicId: 'a', followTopic: feeds.follow });
+    kit.attach.showTopic();
     await connected(kit);
     await kit.attach.switchSession(destination('work', 'b'));
-    const fresh = kit.attach.refreshTopic();
-    reads.at(-1)!({ kind: 'shown', topic: { ...topic('b'), label: 'Saved title' } });
-    await fresh;
-    reads[0]({ kind: 'shown', topic: topic('a') });
-    reads[1]({ kind: 'shown', topic: { ...topic('b'), label: 'Old title' } });
+    kit.attach.refreshTopic();
+    expect(feeds.held.map((feed) => [feed.topicId, feed.stopped])).toEqual([['a', true], ['b', true], ['b', false]]);
+    feeds.held[2].onRead({ kind: 'shown', topic: { ...topic('b'), label: 'Saved title' } });
+    feeds.held[0].onRead({ kind: 'shown', topic: topic('a') });
+    feeds.held[1].onRead({ kind: 'shown', topic: { ...topic('b'), label: 'Old title' } });
     await settle();
     expect(kit.attach.state().topic?.id).toBe('b');
     expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Saved title');
+  });
+
+  it('holds a subscription only while a screen shows the Topic of a connected Attach', async () => {
+    const feeds = topicFeeds();
+    const kit = attachOn({ topicId: 'a', followTopic: feeds.follow, hosts: [fakeHost(), fakeHost()] });
+    const header = kit.attach.showTopic();
+    expect(feeds.held).toHaveLength(0);
+    await connected(kit);
+    expect(feeds.live().map((feed) => feed.topicId)).toEqual(['a']);
+    feeds.live()[0].onRead({ kind: 'shown', topic: { ...topic('a'), label: 'First' } });
+    expect(kit.attach.state().topic?.view).toEqual({ kind: 'shown', topic: { ...topic('a'), label: 'First' } });
+
+    // A second screen shares the subscription; it ends when the last one stops showing the Topic.
+    const webView = kit.attach.showTopic();
+    expect(feeds.held).toHaveLength(1);
+    header();
+    header();
+    expect(feeds.live()).toHaveLength(1);
+    webView();
+    expect(feeds.live()).toHaveLength(0);
+    expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('First');
+
+    // Shown again, it subscribes again and keeps the last Topic until the first push.
+    const again = kit.attach.showTopic();
+    expect(feeds.live()).toHaveLength(1);
+    expect(kit.attach.state().topic?.view).toEqual({ kind: 'loading', last: { ...topic('a'), label: 'First' } });
+
+    // A new Connection is followed afresh, on its own Host Server.
+    kit.hosts[0].drop();
+    await settle();
+    expect(feeds.live()).toHaveLength(0);
+    kit.hosts[1].accept();
+    await settle();
+    expect(feeds.live()).toHaveLength(1);
+    expect(feeds.held).toHaveLength(3);
+
+    await kit.attach.close();
+    expect(feeds.live()).toHaveLength(0);
+    again();
   });
 
   it('refuses a superseded switch while keeping a later unsolicited Session', async () => {
@@ -2024,7 +2102,8 @@ describe('the current Session keeps its identity through a rename', () => {
   }
 
   it.each(['before', 'after'])('keeps its Topic and Pane when identity arrives %s opening resolves', async (timing) => {
-    const kit = attachOn({ topicId: 'a', readTopic: async () => ({ kind: 'shown', topic: topic('Title') }) });
+    const kit = attachOn({ topicId: 'a', followTopic: topicFeeds({ kind: 'shown', topic: topic('Title') }).follow });
+    kit.attach.showTopic();
     const host = kit.hosts[0];
     if (timing === 'before') {
       kit.attach.containerLaidOut(PHONE);
@@ -2248,9 +2327,10 @@ describe('the current Session keeps its identity through a rename', () => {
     await kit.attach.close();
   });
 
-  it('keeps rename writes ordered and rejects stale Topic reads', async () => {
-    const reads: ((value: TopicRead) => void)[] = [];
-    const kit = attachOn({ topicId: 'a', readTopic: () => new Promise((resolve) => reads.push(resolve)) });
+  it('keeps rename writes ordered and keeps following the Topic through them', async () => {
+    const feeds = topicFeeds();
+    const kit = attachOn({ topicId: 'a', followTopic: feeds.follow });
+    kit.attach.showTopic();
     await observed(kit);
     let release!: () => void;
     const remember = kit.store.rememberSession;
@@ -2261,9 +2341,9 @@ describe('the current Session keeps its identity through a rename', () => {
     kit.hosts[0].notify('%session-renamed $1 Final');
     await settle();
     expect(kit.wrote.at(-1)).toBe('last place host-1 work a');
-    reads.at(-1)!({ kind: 'shown', topic: topic('Fresh title') });
-    reads[0]({ kind: 'shown', topic: topic('Old title') });
-    reads[1]({ kind: 'shown', topic: topic('Intermediate title') });
+    expect(feeds.held).toHaveLength(1);
+    feeds.held[0].onRead({ kind: 'shown', topic: topic('Old title') });
+    feeds.held[0].onRead({ kind: 'shown', topic: topic('Fresh title') });
     await settle();
     release();
     await kit.attach.close();
@@ -3008,5 +3088,87 @@ describe('the Topic Place', () => {
     await settle();
     expect(where(kit)).toBe('@1 %3');
     expect(kit.attach.state().topic?.id).toBe('a');
+  });
+});
+
+describe('Unread on visit', () => {
+  const topic = (id: string): TopicDetail => ({ id: id as TopicId, label: id, note: null,
+    tags: [], state: 'live', sessions: [] });
+  const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
+  function visits() {
+    const marked: string[] = [];
+    return { marked, markTopicRead: (hostId: string, topicId: TopicId) => { marked.push(`${hostId} ${topicId}`); } };
+  }
+
+  it('marks the shown Session\'s Topic read when the Terminal Screen comes into focus', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+    expect(marked).toEqual([]);
+
+    kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 a']);
+    kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 a', 'host-1 a']);
+  });
+
+  it('waits for the Session to attach when the Terminal Screen comes into focus first', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    kit.attach.terminalFocused();
+    expect(marked).toEqual([]);
+
+    await connected(kit);
+    expect(marked).toEqual(['host-1 a']);
+  });
+
+  it('marks the Topic read when the Attach switches to a Session of a Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+
+    await kit.attach.switchSession(destination('play', 'b'));
+    await settle();
+    expect(marked).toEqual(['host-1 b']);
+
+    kit.hosts[0].notify('%session-changed $3 elsewhere');
+    await settle();
+    expect(kit.attach.state().topic).toBeNull();
+    expect(marked).toEqual(['host-1 b']);
+  });
+
+  it('marks the Topic read when the Host switches the Client to a sibling Session of the Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
+    const kit = attachOn({ topicId: 'a', markTopicRead, followTopic: topicFeeds({ kind: 'shown', topic: detail }).follow });
+    kit.attach.showTopic();
+    await connected(kit);
+
+    kit.hosts[0].notify('%session-changed $2 play');
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(marked).toEqual(['host-1 a']);
+  });
+
+  it('sends nothing for a Session in no Topic', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ markTopicRead });
+    kit.attach.terminalFocused();
+    await connected(kit);
+    kit.attach.terminalFocused();
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    expect(marked).toEqual([]);
+  });
+
+  it('sends nothing after a plain same-Session pick or a rename', async () => {
+    const { marked, markTopicRead } = visits();
+    const kit = attachOn({ topicId: 'a', markTopicRead });
+    await connected(kit);
+    await kit.attach.switchSession(destination('work', 'a'));
+    kit.hosts[0].notify('%session-renamed $1 renamed');
+    await settle();
+    expect(marked).toEqual([]);
   });
 });

@@ -1,19 +1,18 @@
-import { shellQuote } from '@/tmux/commands';
-
 import type { EnvironmentSnapshot, TopicId } from './environment';
 import { object, string } from './json-shape';
 import type { UnknownOutcome } from './request';
 import type { SessionPathChoice } from './session-paths';
 
 /**
- * What one `topic add-session` came to: the new Session's name, the Host's
- * reason it made none, or no answer, when the Host may have made it.
+ * What one `add_session` or `new_session` came to: the new Session's name,
+ * the Host's reason it made none, or a Request in doubt, when the Host may
+ * have made it.
  */
 export type AddSessionRead = { kind: 'added'; session: string } | { kind: 'failed'; error: string } | UnknownOutcome;
 
 /**
- * The name to send as `topic add-session --name` for a Session at `folder`,
- * which the Host makes `<name>/<slug of the Topic>`. With `--name` the Host
+ * The name to send as `add_session`'s `chosen_name` for a Session at `folder`,
+ * which the Host makes `<name>/<slug of the Topic>`. With `chosen_name` the Host
  * finds a live Session of the Topic that has the name and makes nothing, so
  * the name must be one that no Session of the Topic has. The rule is the
  * Host's own `SessionNaming.available`: the name of the folder's Session Path,
@@ -53,22 +52,8 @@ function withoutSlug(sessionName: string): string {
   return slash < 0 ? sessionName : sessionName.slice(0, slash);
 }
 
-/** The Session in the answer of `topic add-session --json`: `{"changed":{"session_name":…}}`. */
+/** The Session in the answer of `add_session` and `new_session`: `{"changed":{"session_name":…}}`. */
 export function parseAddedSession(json: unknown): string {
   const changed = object(object(json, 'answer').changed, 'changed');
   return string(changed.session_name, 'changed.session_name');
-}
-
-/**
- * The folder as one shell word. `muxify` does not expand `~`, and a quoted `~`
- * does not reach the shell's own expansion, so a leading `~` becomes `"$HOME"`.
- * The rest is quoted as is.
- */
-export function folderArgument(folder: string): string {
-  if (folder === '~') return '"$HOME"';
-  if (folder.startsWith('~/')) {
-    const rest = folder.slice(2);
-    return rest === '' ? '"$HOME"/' : `"$HOME"/${shellQuote(rest)}`;
-  }
-  return shellQuote(folder);
 }

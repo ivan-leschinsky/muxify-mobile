@@ -5,9 +5,7 @@ import type { PathOpening } from '@/domain/go-to';
 import type { Host } from '@/storage/records';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
-import { execCommandRunner } from '@/tmux/exec-runner';
-import { appConnections } from '@/tmux/ssh-connection';
-import { TmuxClient } from '@/tmux/tmux-client';
+import { newSession, pushedListing } from '@/topics/host-writes';
 import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { recordVisit } from '@/topics/visit';
 
@@ -16,7 +14,7 @@ import { useHostWrite, type HostWriteRun } from './use-host-write';
 type NewSession = Extract<PathOpening, { kind: 'new' }>;
 
 /**
- * The Host Write of a Go to pick that makes a Session: `session new` at the
+ * The Host Write of a Go to pick that makes a Session: `new_session` at the
  * folder, then the Attach, then the visit. A second try at the same folder
  * and name is the same Request, so it makes no second Session.
  *
@@ -49,10 +47,9 @@ export function useGoToPick(hostId: string, onOpened: () => void) {
     const intent = intentFor(held.current, JSON.stringify([opening.directory, opening.name]));
     held.current = intent;
     void send(async ({ host, step, refuse, unsure }) => {
-      const added = await appConnections().write(host, (transport, muxify) => {
-        if (!focused.current) return refuse('You left the Host Screen before the Connection was up.');
+      const added = await newSession(host, opening.directory, opening.name, intent.request, () => {
+        if (!focused.current) refuse('You left the Host Screen before the Connection was up.');
         step('sending');
-        return muxify.newSession((command) => transport.exec(command), opening.directory, opening.name, intent.request);
       });
       held.current = intentAfter(intent, added);
       if (added.kind === 'failed') return refuse(added.error);
@@ -68,13 +65,12 @@ export function useGoToPick(hostId: string, onOpened: () => void) {
     picked,
     make,
     retry: () => { if (picked) make(picked); },
-    /** Reads the Host's Sessions for the one an unanswered pick asked for, and opens it. */
+    /** Looks in the Listing the Host Server pushes for the Session an unanswered pick asked for, and opens it. */
     check: () => {
       const opening = picked;
       if (!opening) return;
       void check(async ({ host, step, refuse }) => {
-        const sessions = await appConnections().read(host, (transport) =>
-          new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).listSessions());
+        const { sessions } = await pushedListing(host);
         if (!sessions.some((session) => session.name === opening.name)) {
           return refuse(`${opening.name} is not on ${host.displayName}. Pick the folder again to make it.`);
         }

@@ -1,8 +1,9 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
-import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
+import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
+import type { SessionOnHost } from '@/topics/tmux-order';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**
@@ -15,11 +16,11 @@ export type HostScreenTab = 'topics' | 'sessions';
  * The tabs the Host Screen shows, in their order. The Host's Config decides,
  * through `sidebar` in the snapshot, so the Mac and the phone show the same
  * views. A Host CLI that does not say shows both. A Host with no Topics to
- * read (no Host CLI, an old one, or no snapshot yet) shows the Sessions only.
+ * read (no Host CLI, one being updated, or no snapshot yet) shows the Sessions only.
  */
 export function hostScreenTabs(topics: HostTopics): readonly [HostScreenTab, ...HostScreenTab[]] {
   const snapshot = lastSnapshot(topics);
-  if (snapshot === null || topics.kind === 'old' || topics.kind === 'updating') return ['sessions'];
+  if (snapshot === null || topics.kind === 'updating') return ['sessions'];
   const { sidebar } = snapshot;
   if (sidebar === null || sidebar.topics === sidebar.sessions) return ['topics', 'sessions'];
   return sidebar.topics ? ['topics'] : ['sessions'];
@@ -46,6 +47,8 @@ export interface SessionRow {
   windowCount: number | undefined;
   /** The Topic it is in, or "No Topic". Null where the row says nothing about Topics. */
   topicLabel: string | null;
+  /** What the Host Server says of it, for its Actions. Undefined where the row offers none, as in Sessions only. */
+  onHost?: SessionOnHost;
 }
 
 /** One row of a Host Screen section. A section with no Session rows has one of the others. */
@@ -72,7 +75,7 @@ export type HostScreenRow =
       seed: TopicDetail;
     }
   /** A Locked Session shown as its own card. */
-  | { kind: 'locked-session'; name: string; mark: Mark | null; pinned: boolean }
+  | { kind: 'locked-session'; session: SessionId; name: string; mark: Mark | null; pinned: boolean }
   /** An empty In Play place. */
   | { kind: 'open-place'; id: string }
   /** The In Play Bench, as one row that opens to show its cards. */
@@ -180,7 +183,7 @@ interface CardsContext {
 
 /**
  * The Topics list. Before a snapshot, it is one Topics section with a row that
- * says why. A failed read, an old Host CLI and its update put their row above
+ * says why. A failure and a Host CLI update put their row above
  * the last snapshot's cards.
  */
 function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
@@ -195,22 +198,17 @@ function topicsList(topics: HostTopics, context: CardsContext): HostScreenSectio
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
 }
 
-/** The row that says why the Topics are not as the Host has them now: an install, an old Host CLI or a failed read. */
+/** The row that says why the Topics are not as the Host has them now: an install or update, a failure, or no Host Server. */
 function topicsNotice(topics: HostTopics): HostScreenRow[] {
   switch (topics.kind) {
     case 'installing':
       return [{ kind: 'checking', text: 'Installing Muxify on this Host…' }];
-    case 'old':
-      return [{
-        kind: 'note',
-        text: topics.failure === undefined
-          ? 'Update Muxify on this Host'
-          : `Update Muxify on this Host. Could not update it: ${topics.failure}`,
-      }];
     case 'updating':
       return [{ kind: 'checking', text: 'Updating Muxify on this Host…' }];
     case 'failed':
       return [{ kind: 'refused', message: topics.error }];
+    case 'unavailable':
+      return [{ kind: 'note', text: topicsUnavailable(topics.host, topics.reason) }];
     case 'absent':
     case 'loading':
     case 'listed':
@@ -337,7 +335,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
       const name = names.get(card.sessions[0]);
       return name === undefined
         ? { kind: 'unknown-card', text: card.sessions[0] }
-        : { kind: 'locked-session', name, mark: card.mark, pinned };
+        : { kind: 'locked-session', session: card.sessions[0], name, mark: card.mark, pinned };
     }
     case 'open_place':
       return { kind: 'open-place', id: card.id };
@@ -352,7 +350,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * The Sessions tab: every running Session in the order the Host lists them,
  * which is the order the Mac's Sessions view shows. A Host with Topics says
  * which Topic each Session is in. A row above them says why the Host has no
- * Topics tab, when the Host CLI is old, is being installed, or failed.
+ * Topics tab, when the Host CLI is being installed or updated, or failed.
  */
 function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
   const rows: HostScreenRow[] = runningSessions(listing, topics)?.map((session) => ({
@@ -360,6 +358,7 @@ function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
     name: session.name,
     windowCount: session.windowCount,
     topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
+    ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
   })) ?? [unansweredRow(listing)];
   const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
   return {
@@ -375,6 +374,8 @@ export interface RunningSession {
   windowCount: number | undefined;
   /** The label of its Topic, or null for a Session in no Topic. Undefined when the Host has not said. */
   topicLabel: string | null | undefined;
+  /** Its id and whether it is in a Topic, from the Host Server's snapshot. Undefined when the Host has not said. */
+  onHost?: SessionOnHost;
 }
 
 /** The Host's Sessions in the order the Host lists them, or undefined while the Host has no answer. */
@@ -391,6 +392,7 @@ export function runningSessions(listing: Listing, topics: HostTopics): RunningSe
       name: live.name,
       windowCount: live.windowCount ?? known?.windows?.length,
       topicLabel: known === undefined ? undefined : known.topic === null ? null : labels.get(known.topic),
+      ...(known === undefined ? {} : { onHost: { id: known.id, inTopic: known.topic !== null } }),
     };
   });
 }

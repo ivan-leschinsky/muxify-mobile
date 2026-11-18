@@ -12,6 +12,7 @@ import {
   type OpenableRow,
 } from './host-screen';
 import type { Session } from '@/tmux/tmux-client';
+import type { SessionOnHost } from '@/topics/tmux-order';
 import type {
   Card,
   EnvironmentSnapshot,
@@ -25,9 +26,8 @@ import inPlayFixture from '@/topics/__fixtures__/environment-in-play.json';
 import { parseEnvironment } from '@/topics/environment';
 import type { HostCliOutcome, HostCliState } from '@/topics/host-cli-install';
 import {
+  lastSnapshot,
   listedSessions,
-  loadingTopics,
-  settled,
   TOPICS_UNASKED,
   withHostCli,
   type HostTopics,
@@ -35,8 +35,8 @@ import {
 
 const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
-const sessionRow = (name: string, topicLabel: string | null = null, windowCount?: number): HostScreenRow =>
-  ({ kind: 'session', name, windowCount, topicLabel });
+const sessionRow = (name: string, topicLabel: string | null = null, windowCount?: number, onHost?: SessionOnHost): HostScreenRow =>
+  ({ kind: 'session', name, windowCount, topicLabel, ...(onHost === undefined ? {} : { onHost }) });
 const note = (text: string) => ({ kind: 'note', text }) as const;
 
 const INSTALL_RUNNING: HostCliState = { kind: 'running' };
@@ -114,7 +114,6 @@ const snapshotSession = (id: string, name: string, topic: string | null) => ({
 
 function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot {
   return {
-    capabilities: [],
     sidebar: null,
     tags: [],
     sessions: [],
@@ -296,8 +295,8 @@ describe('the Topics tab of the Host Screen', () => {
         unpinned: inPlay({ places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] }),
       }),
       sections: [
-        section('pinned', 'Pinned', { kind: 'locked-session', name: 'notes', mark: 'unread', pinned: true }),
-        inPlaySection({ kind: 'locked-session', name: 'scratch', mark: null, pinned: false }),
+        section('pinned', 'Pinned', { kind: 'locked-session', session: sid('$2'), name: 'notes', mark: 'unread', pinned: true }),
+        inPlaySection({ kind: 'locked-session', session: sid('$1'), name: 'scratch', mark: null, pinned: false }),
       ],
     },
     {
@@ -425,32 +424,14 @@ describe('the Topics tab of the Host Screen', () => {
       sections: [topicsSection(note('No Topics on this Host'))],
     },
     {
-      name: 'asks for an update on a Host whose Muxify is old',
-      topics: { kind: 'old', last: null },
-      sections: [topicsSection(note('Update Muxify on this Host'))],
-    },
-    {
       name: 'says the Host CLI is being installed on a Host with none',
       topics: withHostCli({ kind: 'absent' }, INSTALL_RUNNING),
       sections: [topicsSection({ kind: 'checking', text: 'Installing Muxify on this Host…' })],
     },
     {
-      name: 'says an old Host CLI is being updated, with nothing under it without a last snapshot',
-      topics: withHostCli({ kind: 'old', last: null }, INSTALL_RUNNING),
+      name: 'says a Host CLI too old for a Host Server is being updated, with nothing under it',
+      topics: withHostCli({ kind: 'unavailable', host: 'Mac', reason: 'x' }, INSTALL_RUNNING),
       sections: [topicsSection({ kind: 'checking', text: 'Updating Muxify on this Host…' })],
-    },
-    {
-      name: 'says an old Host CLI is being updated above the last snapshot, which it keeps',
-      topics: withHostCli(
-        settled(
-          { kind: 'loading', last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
-          { kind: 'old' },
-        ),
-        INSTALL_RUNNING,
-      ),
-      sections: [
-        inPlaySection({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topicRow('t1')),
-      ],
     },
     {
       name: 'says why the Host CLI could not be installed on a Host with none',
@@ -463,19 +444,9 @@ describe('the Topics tab of the Host Screen', () => {
       ],
     },
     {
-      name: 'still asks for an update, with the reason, when an old Host CLI could not be updated',
-      topics: withHostCli({ kind: 'old', last: null }, installDone('failed', 'no answer in 3 minutes')),
-      sections: [
-        topicsSection(note('Update Muxify on this Host. Could not update it: no answer in 3 minutes')),
-      ],
-    },
-    {
-      name: 'shows the Topics read after the install put a Host CLI there',
+      name: 'shows the Topics pushed after the install put a Host CLI there',
       topics: withHostCli(
-        settled({ kind: 'loading', last: null }, {
-          kind: 'listed',
-          snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
-        }),
+        { kind: 'listed', snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
         installDone('installed', 'abc1234 1760000000'),
       ),
       sections: [inPlaySection(topicRow('t1'))],
@@ -485,11 +456,6 @@ describe('the Topics tab of the Host Screen', () => {
         name: `says there are no Topics on a Host with no Host CLI after an install that answered ${outcome}`,
         topics: withHostCli({ kind: 'absent' }, installDone(outcome, 'x')),
         sections: [topicsSection(note('No Topics on this Host'))],
-      },
-      {
-        name: `asks for an update on an old Host CLI after an install that answered ${outcome}`,
-        topics: withHostCli({ kind: 'old', last: null }, installDone(outcome, 'x')),
-        sections: [topicsSection(note('Update Muxify on this Host'))],
       },
     ]),
     {
@@ -576,14 +542,14 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
 });
 
 describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
-  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) });
+  const listed: HostTopics = { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) };
 
   it.each<{ name: string; listing: Listing; topics: HostTopics; answered: boolean }>([
     { name: 'waits while the first read is in flight', listing: UNASKED, topics: TOPICS_UNASKED, answered: false },
     { name: 'waits for the Topics, which say the tabs', listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: false },
     { name: 'draws once both have answered', listing: answered([running('main')]), topics: listed, answered: true },
     { name: 'draws a Host with no Host CLI', listing: answered([running('main')]), topics: { kind: 'absent' }, answered: true },
-    { name: 'does not wait again on a later read', listing: asking(answered([running('main')])), topics: loadingTopics(listed), answered: true },
+    { name: 'does not wait again on a later read', listing: asking(answered([running('main')])), topics: { kind: 'loading', last: parseEnvironment(inPlayFixture) }, answered: true },
     { name: 'takes a refusal as the answer', listing: refused('This Host is no longer saved.'), topics: TOPICS_UNASKED, answered: true },
   ])('$name', ({ listing, topics, answered: expected }) => {
     expect(firstReadAnswered({ listing, topics })).toBe(expected);
@@ -601,11 +567,10 @@ describe('the tabs of the Host Screen', () => {
     { name: 'shows both when the Config has both off, which leaves no view', topics: withSidebar({ topics: false, sessions: false }), tabs: ['topics', 'sessions'] },
     { name: 'shows only Sessions on a Host with no Host CLI', topics: { kind: 'absent' }, tabs: ['sessions'] },
     { name: 'shows only Sessions while the Host CLI is installed', topics: { kind: 'installing' }, tabs: ['sessions'] },
-    { name: 'shows only Sessions on an old Host CLI, also with a last snapshot', topics: { kind: 'old', last: snapshot() }, tabs: ['sessions'] },
     { name: 'shows only Sessions while an old Host CLI is updated', topics: { kind: 'updating', last: snapshot() }, tabs: ['sessions'] },
     { name: 'shows only Sessions when the Topics read failed and there is no snapshot', topics: { kind: 'failed', error: 'no route', last: null }, tabs: ['sessions'] },
     { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: snapshot() }, tabs: ['topics', 'sessions'] },
-    { name: 'keeps the tabs of the last snapshot while it reads again', topics: loadingTopics(withSidebar({ topics: true, sessions: false })), tabs: ['topics'] },
+    { name: 'keeps the tabs of the last snapshot while it reads again', topics: { kind: 'loading', last: lastSnapshot(withSidebar({ topics: true, sessions: false })) }, tabs: ['topics'] },
   ])('$name', ({ topics, tabs }) => {
     expect(hostScreenTabs(topics)).toEqual(tabs);
   });
@@ -632,7 +597,11 @@ describe('the Sessions tab of the Host Screen', () => {
 
   it('lists every running Session in the order of the Listing, with its Topic under the name, and no Bench', () => {
     expect(sessions(answered([running('zeta', 3), running('alpha'), running('benched', 2)]), withTopics)).toEqual([
-      sessionsSection(sessionRow('zeta', 'Topic t1', 3), sessionRow('alpha', 'No Topic', 1), sessionRow('benched', 'Topic b1', 2)),
+      sessionsSection(
+        sessionRow('zeta', 'Topic t1', 3, { id: sid('$1'), inTopic: true }),
+        sessionRow('alpha', 'No Topic', 1, { id: sid('$2'), inTopic: false }),
+        sessionRow('benched', 'Topic b1', 2, { id: sid('$3'), inTopic: true }),
+      ),
     ]);
   });
 
@@ -647,7 +616,7 @@ describe('the Sessions tab of the Host Screen', () => {
       { id: '@2', index: 1, name: 'vim', active: false, mark: null },
     ] }] });
     expect(runningSessions(answered([{ name: 'main', windowCount: undefined }]), topics)).toEqual([
-      { name: 'main', windowCount: 2, topicLabel: null },
+      { name: 'main', windowCount: 2, topicLabel: null, onHost: { id: sid('$1'), inTopic: false } },
     ]);
   });
 
@@ -661,8 +630,7 @@ describe('the Sessions tab of the Host Screen', () => {
 
   it.each<{ name: string; topics: HostTopics; row: HostScreenRow }>([
     { name: 'the Host CLI is being installed', topics: withHostCli({ kind: 'absent' }, INSTALL_RUNNING), row: { kind: 'checking', text: 'Installing Muxify on this Host…' } },
-    { name: 'the Host CLI is old', topics: { kind: 'old', last: null }, row: note('Update Muxify on this Host') },
-    { name: 'an old Host CLI is being updated', topics: withHostCli({ kind: 'old', last: null }, INSTALL_RUNNING), row: { kind: 'checking', text: 'Updating Muxify on this Host…' } },
+    { name: 'an old Host CLI is being updated', topics: withHostCli({ kind: 'unavailable', host: 'Mac', reason: 'x' }, INSTALL_RUNNING), row: { kind: 'checking', text: 'Updating Muxify on this Host…' } },
     {
       name: 'the Host CLI could not be installed',
       topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
@@ -714,7 +682,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
   it('shows the Benched card of a Locked Session that the Attach is on', () => {
     expect(benchRows({ sessionName: 'locked', topic: null })).toEqual([
       CLOSED_BENCH,
-      { kind: 'locked-session', name: 'locked', mark: null, pinned: false },
+      { kind: 'locked-session', session: sid('$4'), name: 'locked', mark: null, pinned: false },
     ]);
   });
 

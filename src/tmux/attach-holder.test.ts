@@ -70,7 +70,9 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     clearPane: () => {},
     refreshSessions: () => {},
     refreshTopology: () => {},
-    refreshTopic: async () => {},
+    refreshTopic: () => {},
+    terminalFocused: () => {},
+    showTopic: () => () => {},
     reconnect: () => {
       log.push(`reconnect ${options.host.id}:${destination.sessionName}`);
       phase = { kind: 'reconnecting' };

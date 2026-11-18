@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RankedPaths } from '@/domain/go-to';
 import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceGoToCache, deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
+import { rankedSessionPaths } from '@/topics/host-session-paths';
 
 /** Where the read of the paths stands, for the line above the list. */
 export type PathsReading = { kind: 'idle' } | { kind: 'reading' } | { kind: 'failed'; error: string };
@@ -15,8 +15,9 @@ const ASK_DEBOUNCE_MS = 150;
  * for them.
  *
  * The phone keeps the Host's last answer for an empty field, so the list is
- * there before the Host answers. `ask` reads the Host for the text in the
- * field, and only the answer for the newest text is kept.
+ * there before the Host answers. `ask` asks the Host Server for the text in
+ * the field (`session_paths`), and only the answer for the newest text is
+ * kept, in the Host's order.
  *
  * A new answer for an empty field is not put under the user's finger: while
  * `still` is true and rows are on show, the answer waits, and it shows when
@@ -63,12 +64,10 @@ export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
     try {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const answer = await appConnections().read(host, (transport, muxify) =>
-        muxify.rankedSessionPaths((command) => transport.exec(command), query));
-      if (answer.kind === 'failed') throw new Error(answer.error);
-      if (query === '') void deviceGoToCache().save(hostId, answer.rows);
+      const rows = await rankedSessionPaths(host, query);
+      if (query === '') void deviceGoToCache().save(hostId, rows);
       if (!current()) return;
-      const next = { query, rows: answer.rows };
+      const next = { query, rows };
       if (query === '' && stillNow.current && shown.current.rows.length > 0) waiting.current = next;
       else show(next);
       setReading({ kind: 'idle' });

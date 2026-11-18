@@ -31,10 +31,17 @@ ends when the transport is lost, when its keepalive goes unanswered for about
 _Avoid_: SSH session, link, socket
 
 **Host CLI**:
-The `muxify` on a Host, which the phone uses to read and change its Topics. The
-phone, and desktop Muxify when it connects, install and update it in
-`~/.local/bin`; on a Mac with Muxify.app it is the app's own.
+The `muxify` on a Host, which keeps that Host's Topics. The phone and desktop
+Muxify read and change them through its Host Server. Both install and update it
+in `~/.local/bin`; on a Mac with Muxify.app it is the app's own.
 _Avoid_: desktop CLI, desktop Muxify (when you mean the `muxify` command), remote helper
+
+**Host Server**:
+The Host CLI serving the phone over one channel of a Host's Connection, for as
+long as the Connection lives. Through it the Host Screen and the Topic Screen
+show the Host's changes as they happen. When it cannot run, the Host Screen
+shows only Sessions and says why Topics are unavailable.
+_Avoid_: daemon, remote server, helper
 
 **Fingerprint**:
 The host key hash recorded the first time a Host is reached, compared on every
@@ -212,17 +219,19 @@ Cold reconnect and direct Terminal entry construct the same parent screens.
 Adding, editing, deleting, and ordering Hosts is in Settings.
 
 **Listing**:
-What a Host last said its Sessions were. The Host Screen asks again every time they come back into focus — a sheet closing over it, a return from the Terminal
-Screen — and the asking is invisible: the answer it is holding stays on screen
-until a better one arrives. Only the first question has nothing to show and a
-spinner to stand in for it. A refusal is the exception and drops the list,
-because a Host that cannot be reached has no Sessions to offer.
+What a Host last said its Topics and Sessions were. The Host Server pushes a new
+Listing whenever it changes on the Host, and the Host Screen draws it at once:
+the answer it holds stays on screen until the next one arrives. Only the first
+Listing of a Connection has nothing to show and a spinner to stand in for it. A
+refusal is the exception and drops the list, because a Host that cannot be
+reached has no Sessions to offer.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Write**:
 One change the user asks of a Host: New Topic, Edit Topic, a Go to pick that
-makes a Session, Add a Session, and the menu orders, drops and wakes of a
-Topic card. The user never
+makes a Session, Add a Session, the menu orders, drops and wakes of a Topic
+card, Pin, Unpin, Forget, renaming, removing or stopping a Session, renaming
+or closing a Window, and Mark All as Read. The user never
 sends it again blind: a Host Write that carries a Request is sent one more
 time with the same id when no answer came, and any other is not sent again by
 itself. While it runs, a second tap is ignored. It ends done, failed or
@@ -345,6 +354,12 @@ Session shows under the Bench row, also while the Bench is open, until the
 user opens the No Topic row, which lists it.
 _Avoid_: current card, pinned card
 
+**Unread on visit**:
+The Mac's rule that showing a Session clears its Topic's Unread. The phone
+follows it while the Attach shows a Session: when the Terminal Screen comes
+into focus and when the Attach switches Session.
+_Avoid_: auto-read, mark seen
+
 **No Topic**:
 The Sessions on a Host that belong to no Topic. The Topics tab of the Host
 Screen shows them in a separate group after the Topics and the Bench. Its No
@@ -427,8 +442,8 @@ Agents.
 _Avoid_: Reset, Restart
 
 **Request**:
-One change that the user asks of a Host through its Host CLI, with an id that
-the phone makes when the action starts. The Host applies a Request one time: a
+One change that the user asks of a Host through its Host Server, with an id
+that the phone makes when the action starts. The Host applies a Request one time: a
 second send with the same id gets the answer of the first and changes nothing.
 So when the answer to a change is lost, the phone sends the same Request one
 more time. If there is still no answer, or the Host says that the Request is
@@ -595,9 +610,10 @@ of the Terminal and of the Host Screen, opens these settings. A Session pick use
 
 Windows shows the current Session's Windows. With a Topic, it shows the full
 title, Topic Note and Tags, then each live Session's Windows and Agent marks.
-The current Session uses its live Topology. The Attach reads the Topic when
-the chooser opens or returns from a form. A failed read keeps the last answer
-and offers Retry. A Window pick switches Session when needed and selects that
+The current Session uses its live Topology. While the Terminal Screen or the
+Web View shows the Topic, its Host Server pushes the Topic's detail, and the
+chooser draws each push. A Topic that is gone, or a failed push, keeps the
+last answer, says why and offers Retry. A Window pick switches Session when needed and selects that
 Window. Browser Tabs for the current Window appear below these rows.
 
 Topics shows the Host's Topics with the Bench open. A live Topic opens its
@@ -608,15 +624,16 @@ _Avoid_: Windows picker, Windows sheet, Topic sheet
 
 **Browser Tab**:
 One page that is open in a Window's Browser on the Host. The Browser and its
-Tabs are desktop Muxify's, and the phone reads them through `muxify browser
-tabs` for one Window, named by tmux's id. Each Tab has a URL, a title and
-whether it is the Tab that the Browser shows. The phone lists a Tab only when
+Tabs are desktop Muxify's, and the phone reads them from the Host Server's
+`browser_tabs` for one Window, named by tmux's id: the Tabs desktop Muxify
+stored in the Window's tmux options. Each Tab has a URL, a title (empty for a
+stored Tab) and whether it is the Tab that the Browser shows. The phone lists a Tab only when
 it can reach the URL: http or https at a Tailscale address (a `*.ts.net` name,
 or an IPv4 address in 100.64.0.0/10), or at a public site such as
 `github.com`. It does not list host-local Tabs, such as `localhost`, a name
 with no dot or a private IPv4 address, because on the phone that address is
-the phone or a network that the phone is not on. A Host with no desktop
-Muxify, or whose Muxify does not show the tmux server, lists no Tabs. See ADR
+the phone or a network that the phone is not on. A Window whose
+Browser has no Tabs, and a Host in Sessions only, list no Tabs. See ADR
 0015 and ADR 0017.
 _Avoid_: page, link, bookmark, browser tab (in lower case, for the term)
 

@@ -32,9 +32,9 @@ import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
 import { useOpenSession } from '@/tmux/attach-context';
-import { appConnections } from '@/tmux/ssh-connection';
 import { folderSessionName } from '@/topics/add-session';
 import type { Tag, TopicId } from '@/topics/environment';
+import { addSession, createTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
 import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import type { TopicDetail } from '@/topics/topic-detail';
@@ -79,9 +79,8 @@ export default function NewTopicScreen() {
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
-      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to create Topics.');
-      if (!left) setTagsRead({ attempt: tagsAttempt, tags: result.snapshot.tags });
+      const { tags: listed } = await pushedListing(host);
+      if (!left) setTagsRead({ attempt: tagsAttempt, tags: listed });
     })().catch((error) => { if (!left) setTagsRead({ attempt: tagsAttempt, tags: null, error: describeConnectionFailure(error) }); });
     return () => { left = true; };
   }, [hostId, tagsAttempt]);
@@ -126,10 +125,7 @@ export default function NewTopicScreen() {
     const sent = intentFor(created, JSON.stringify([wanted, chosenTags]));
     setCreated(sent);
     void send(async ({ host, step: at, refuse, unsure }) => {
-      const made = await appConnections().write(host, (transport, muxify) => {
-        at('sending');
-        return muxify.create((command) => transport.exec(command), wanted, chosenTags, sent.request);
-      });
+      const made = await createTopic(host, wanted, chosenTags, sent.request, () => at('sending'));
       setCreated(intentAfter(sent, made));
       if (made.kind === 'failed') return refuse(made.error);
       if (made.kind === 'unknown') return unsure(made.message);
@@ -140,9 +136,7 @@ export default function NewTopicScreen() {
   const checkCreated = () => {
     const wanted = title.value.trim();
     void check(async ({ host, refuse }) => {
-      const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
-      if (read.kind !== 'listed') throw new Error(read.kind === 'failed' ? read.error : 'Update Muxify on this Host to create Topics.');
-      return emptyTopicTitled(read.snapshot, wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Create sends it again.`);
+      return emptyTopicTitled(await pushedListing(host), wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Create sends it again.`);
     }).then((topic) => toAddSession(topic, wanted));
   };
 
@@ -165,14 +159,12 @@ export default function NewTopicScreen() {
     const intent = intentFor(added?.intent ?? null, JSON.stringify([addition.folder, addition.worktree]));
     setAdded({ addition, intent });
     void send(async ({ host, step: at, refuse, unsure }) => {
-      const result = await appConnections().write(host, (transport, muxify) => {
-        at('sending');
-        const exec = (command: string) => transport.exec(command);
-        if (addition.worktree) return muxify.addWorktreeSession(exec, topic.id, addition.folder, intent.request);
-        // The Topic is new, so no Session of it has the name of the folder's Session Path.
-        const name = paths.rows.find((row) => row.directory === addition.folder)?.name ?? folderSessionName(addition.folder);
-        return muxify.addSession(exec, topic.id, addition.folder, intent.request, name);
-      });
+      const row = paths.rows.find((candidate) => candidate.directory === addition.folder);
+      const folder = { directory: addition.folder, worktree: row?.worktree ?? null, name: row?.name };
+      // The Topic is new, so no Session of it has the name of the folder's Session Path. A new
+      // Worktree's Session takes its name from the branch, which only the Host knows.
+      const chosenName = addition.worktree ? undefined : row?.name ?? folderSessionName(addition.folder);
+      const result = await addSession(host, topic.id, folder, { newWorktree: addition.worktree, chosenName }, intent.request, () => at('sending'));
       if (intentAfter(intent, result) === null) setAdded(null);
       if (result.kind === 'failed') return refuse(result.error);
       if (result.kind === 'unknown') return unsure(result.message);
@@ -189,9 +181,7 @@ export default function NewTopicScreen() {
     if (step.step !== 'add-session') return;
     const { topic } = step;
     void check(async ({ host, step: at, refuse }) => {
-      const read = await appConnections().read(host, (transport, muxify) => muxify.show((command) => transport.exec(command), topic.id));
-      if (read.kind === 'failed') throw new Error(read.error);
-      const [session] = read.topic.sessions;
+      const [session] = (await pushedTopic(host, topic.id)).sessions;
       if (!session) return refuse(`${topic.label} has no Session on ${host.displayName}. Pick the folder again to add it.`);
       return attach(topic, session.name, host, at);
     }).then(opened);

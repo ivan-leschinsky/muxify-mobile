@@ -10,14 +10,10 @@ import { useHostWrites } from './use-host-write';
  * The writes a Topic card sends on the Host Screen: a menu order, a drop and a
  * wake. The card shows a spinner while its write runs, and a second order for
  * it is ignored. The menu has closed by then, so the end comes as an alert.
- * After the write, pass or fail, the screen reads the Listing again: it shows
- * where the Mac put the card, and so it is also the check of an unsure write.
+ * Nothing is read after the write: the Host Server pushes the Listing that
+ * shows where the Mac put the card, which is also the check of an unsure write.
  */
-export function useTopicCardWrites(
-  hostId: string,
-  readAgain: () => Promise<void> | void,
-  send: typeof sendTopicOrder = sendTopicOrder,
-) {
+export function useTopicCardWrites(hostId: string, send: typeof sendTopicOrder = sendTopicOrder) {
   const writes = useHostWrites(hostId);
   const order = async (topicId: TopicId, order: TopicOrder) => {
     const end = await writes.sendAndReport(topicId, async ({ host, step, refuse, unsure }) => {
@@ -27,7 +23,6 @@ export function useTopicCardWrites(
     });
     if (end === undefined) return;
     alertCardWrite(orderLabel(order), end);
-    await readAgain();
   };
   return { order, writing: (topicId: TopicId) => writes.state(topicId).kind === 'running' };
 }

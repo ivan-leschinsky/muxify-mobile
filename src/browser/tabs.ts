@@ -1,11 +1,11 @@
 /**
- * What `muxify browser tabs --window <id> --json` says about one Window's
+ * What the Host Server's `browser_tabs { window }` says about one Window's
  * Browser, and which of its Tabs the phone can open.
  */
 
 import { array, object, string } from '@/topics/json-shape';
 
-/** One Tab of a Window's Browser on the Host, as desktop Muxify lists it. */
+/** One Tab of a Window's Browser on the Host, as its Host Server lists it. */
 export interface BrowserTab {
   id: string;
   url: string;
@@ -16,9 +16,9 @@ export interface BrowserTab {
 }
 
 /**
- * One read of a Window's Tabs. A Host with no Host CLI, a tmux server
- * that Muxify does not show and a `muxify` too old to have the command are
- * each a failed read, and the Title Sheet then lists no Tabs.
+ * One read of a Window's Tabs. A Host in Sessions only and a Host Server
+ * that refuses, as for a Window that no longer exists, are each a failed
+ * read, and the Title Sheet then lists no Tabs.
  */
 export type BrowserTabsRead = { kind: 'listed'; tabs: BrowserTab[] } | { kind: 'failed'; error: string };
 
